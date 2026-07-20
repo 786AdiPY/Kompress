@@ -1,0 +1,77 @@
+{
+  "project": "churn-detector",
+  "framework": "xgboost",
+  "task": "binary_classification",
+  "num_classes": 2,
+  "features": [
+    {
+      "name": "tenure_months",
+      "dtype": "float"
+    },
+    {
+      "name": "monthly_charges",
+      "dtype": "float"
+    },
+    {
+      "name": "total_charges",
+      "dtype": "float"
+    },
+    {
+      "name": "num_products",
+      "dtype": "int"
+    },
+    {
+      "name": "support_calls",
+      "dtype": "int"
+    },
+    {
+      "name": "payment_delay_days",
+      "dtype": "int"
+    },
+    {
+      "name": "contract_type",
+      "dtype": "int",
+      "choices": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "internet_service",
+      "dtype": "int"
+    },
+    {
+      "name": "online_security",
+      "dtype": "int"
+    },
+    {
+      "name": "tech_support",
+      "dtype": "int"
+    }
+  ],
+  "target": "churn",
+  "native": {
+    "name": "native_xgboost",
+    "kind": "native",
+    "path": "artifacts/model.pkl",
+    "size_kb": 870.3,
+    "note": "uncompressed reference"
+  },
+  "variants": [
+    {
+      "name": "onnx_fp32",
+      "kind": "onnx",
+      "path": "artifacts/model_fp32.onnx",
+      "size_kb": 623.9,
+      "note": "baseline (no compression)"
+    },
+    {
+      "name": "trt_int8",
+      "kind": "onnx",
+      "path": "artifacts/model_fp32.onnx",
+      "size_kb": 623.9,
+      "note": "fallback: no GPU/TensorRT"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "project": "compression-demo",
+  "models": [
+    {
+      "name": "churn",
+      "framework": "xgboost",
+      "task": "binary_classification",
+      "manifest": "artifacts\\churn\\variants.json"
+    },
+    {
+      "name": "house_price",
+      "framework": "sklearn",
+      "task": "regression",
+      "manifest": "artifacts\\house_price\\variants.json"
+    }
+  ]
+}

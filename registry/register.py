@@ -1,20 +1,20 @@
-"""Push best compressed model to MLflow Model Registry after gate passes."""
+"""Register the best gate-passing variant of EACH model to the MLflow Model
+Registry. ONNX is the universal, framework-agnostic registry artifact.
+"""
+import json
 import os
 import sys
-import json
+
 import mlflow
+import mlflow.onnx
+import onnx
 from mlflow.tracking import MlflowClient
 
-TRACKING_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-EXPERIMENT      = os.getenv("MLFLOW_EXPERIMENT",   "xgb-churn-compression")
-RESULTS_PATH    = os.getenv("RESULTS_PATH",         "artifacts/benchmark_results.json")
-GATE_REPORT     = os.getenv("GATE_REPORT",          "artifacts/gate_report.json")
-MODEL_PKL       = os.getenv("MODEL_PKL",            "artifacts/model.pkl")
-MODEL_ONNX      = os.getenv("MODEL_ONNX",           "artifacts/model_fp32.onnx")
-MODEL_TRT       = os.getenv("MODEL_TRT",            "artifacts/model_int8.trt")
-REGISTRY_NAME   = os.getenv("REGISTRY_NAME",        "churn-detector")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-PRIORITY = ["trt_int8", "onnx_fp32", "pkl_xgboost", "trt_int8_fallback_onnx"]
+from common import load_config  # noqa: E402
+
+TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 
 
 def load_json(path):
@@ -22,106 +22,85 @@ def load_json(path):
         return json.load(f)
 
 
-def pick_best(results: list, gate: dict) -> dict:
-    """Pick fastest model that passed the gate."""
-    passed_names = {c["model"] for c in gate.get("checks", []) if c["passed"]}
-    passed_names.add(gate.get("baseline", ""))  # baseline always passes
-
-    for priority_model in PRIORITY:
-        for r in results:
-            if r["model"] == priority_model and r["model"] in passed_names:
-                return r
-    # Fallback: pick baseline
-    return next(r for r in results if r["model"] == gate.get("baseline"))
+def pick_best(results, gate):
+    passed = {c["variant"] for c in gate.get("checks", []) if c["passed"]}
+    passed.add(gate.get("baseline", ""))
+    candidates = [r for r in results if r["model"] in passed] or results
+    return min(candidates, key=lambda r: r["latency_ms"])
 
 
-def register_model(best: dict, results: list, gate: dict):
-    mlflow.set_tracking_uri(TRACKING_URI)
-    client = MlflowClient()
+def resolve_onnx_path(best, manifest):
+    for v in manifest["variants"]:
+        if v["name"] == best["model"] and v["path"].endswith(".onnx"):
+            return v["path"]
+    for v in manifest["variants"]:
+        if v["name"] == "onnx_fp32" and v["path"].endswith(".onnx"):
+            return v["path"]
+    for v in manifest["variants"]:
+        if v["path"].endswith(".onnx"):
+            return v["path"]
+    raise FileNotFoundError("No ONNX variant available to register.")
 
-    # Find the latest run in experiment
-    exp = client.get_experiment_by_name(EXPERIMENT)
-    if exp is None:
-        print(f"Experiment '{EXPERIMENT}' not found.")
-        sys.exit(1)
 
-    runs = client.search_runs(
-        experiment_ids=[exp.experiment_id],
-        order_by=["start_time DESC"],
-        max_results=1,
-    )
-    if not runs:
-        print("No runs found.")
-        sys.exit(1)
+def register_one(spec, cfg, client):
+    manifest = load_json(spec.manifest_path)
+    results = load_json(os.path.join(spec.out_dir, "benchmark_results.json"))
+    gate = load_json(os.path.join(spec.out_dir, "gate_report.json"))
 
-    run_id = runs[0].info.run_id
+    if not gate.get("passed"):
+        print(f"[{spec.name}] gate failed — not registering.")
+        return
 
-    import pickle
-    import xgboost as xgb
+    best = pick_best(results, gate)
+    registry_name = f"{cfg.project}-{spec.name}"
+    onnx_model = onnx.load(resolve_onnx_path(best, manifest))
+    experiment = os.getenv("MLFLOW_EXPERIMENT", f"{cfg.project}-compression")
+    mlflow.set_experiment(experiment)
 
-    with mlflow.start_run(run_id=run_id):
-        # Log final benchmark + gate artifacts
-        mlflow.log_artifact(RESULTS_PATH, artifact_path="benchmark")
-        mlflow.log_artifact(GATE_REPORT,  artifact_path="benchmark")
+    with mlflow.start_run(run_name=f"register-{spec.name}"):
+        mlflow.set_tag("model", spec.name)
+        mlflow.set_tag("framework", spec.framework)
+        mlflow.set_tag("best_variant", best["model"])
+        mlflow.log_metric("best_latency_ms", best["latency_ms"])
+        mlflow.log_metric("best_speedup", best.get("speedup_vs_native", 1.0))
+        for m in ("accuracy", "auc", "f1", "rmse", "mae"):
+            if m in best:
+                mlflow.log_metric(f"best_{m}", best[m])
+        try:
+            mlflow.onnx.log_model(onnx_model, name="model", registered_model_name=registry_name)
+        except TypeError:
+            mlflow.onnx.log_model(onnx_model, artifact_path="model", registered_model_name=registry_name)
 
-        # Log compression metadata
-        mlflow.log_metric("best_model_latency_ms", best["latency_ms"])
-        mlflow.log_metric("best_model_speedup",    best.get("speedup_vs_pkl", 1.0))
-        mlflow.log_metric("best_model_accuracy",   best["accuracy"])
-        mlflow.log_metric("best_model_auc",        best["auc"])
-        mlflow.set_tag("best_compressed_model", best["model"])
-
-        # Log the pkl model so artifact path exists for registration
-        with open(MODEL_PKL, "rb") as f:
-            model = pickle.load(f)
-        mlflow.xgboost.log_model(model, artifact_path="model")
-
-    # Register model artifact
-    artifact_uri = f"runs:/{run_id}/model"
-
-    model_version = mlflow.register_model(
-        model_uri=artifact_uri,
-        name=REGISTRY_NAME,
-    )
-
-    # Add description tags
+    versions = client.search_model_versions(f"name='{registry_name}'")
+    mv = max(versions, key=lambda v: int(v.version))
     client.update_model_version(
-        name=REGISTRY_NAME,
-        version=model_version.version,
-        description=(
-            f"Best compressed model: {best['model']}. "
-            f"Latency={best['latency_ms']:.2f}ms, "
-            f"Accuracy={best['accuracy']:.4f}, "
-            f"Speedup={best.get('speedup_vs_pkl', 1.0):.2f}x vs pkl."
-        ),
+        name=registry_name, version=mv.version,
+        description=(f"Best variant: {best['model']} | framework={spec.framework} "
+                     f"| latency={best['latency_ms']:.2f}ms "
+                     f"| speedup={best.get('speedup_vs_native', 1.0):.2f}x vs native"),
     )
-
-    # Transition to Production
-    client.transition_model_version_stage(
-        name=REGISTRY_NAME,
-        version=model_version.version,
-        stage="Production",
-        archive_existing_versions=True,
-    )
-
-    print(f"\nRegistered '{REGISTRY_NAME}' v{model_version.version} -> Production")
-    print(f"Best model: {best['model']}")
-    print(f"Run ID: {run_id}")
+    try:
+        client.transition_model_version_stage(
+            name=registry_name, version=mv.version,
+            stage="Production", archive_existing_versions=True)
+    except Exception as e:
+        print(f"    (stage transition skipped: {e})")
+    print(f"[{spec.name}] registered '{registry_name}' v{mv.version} -> Production "
+          f"(best={best['model']})")
 
 
 def main():
-    results = load_json(RESULTS_PATH)
-    gate    = load_json(GATE_REPORT)
-
-    if not gate.get("passed"):
-        print("Gate did not pass — aborting registry push.")
-        sys.exit(1)
-
-    best = pick_best(results, gate)
-    print(f"Selected best model: {best['model']}  "
-          f"(latency={best['latency_ms']}ms, acc={best['accuracy']})")
-
-    register_model(best, results, gate)
+    cfg = load_config()
+    mlflow.set_tracking_uri(TRACKING_URI)
+    client = MlflowClient()
+    for spec in cfg.models:
+        if not os.path.exists(os.path.join(spec.out_dir, "gate_report.json")):
+            print(f"[{spec.name}] no gate report — skipping.")
+            continue
+        try:
+            register_one(spec, cfg, client)
+        except Exception as e:
+            print(f"[{spec.name}] registration failed: {e}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+.git
+.github
+**/__pycache__
+*.pyc
+mlflow_store
+artifacts
+*.md
+deploy_build
+.venv
+venv

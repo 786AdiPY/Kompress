@@ -1,190 +1,187 @@
-"""FastAPI serving: /predict/v1 (pkl), /v2 (onnx), /v3 (trt/onnx-fallback)."""
-import os
+"""Framework-agnostic, MULTI-model FastAPI serving.
+
+Reads artifacts/models.json and serves every model + every compressed variant:
+  POST /predict/{model}/{variant}
+  POST /compare/{model}
+  GET  /models
+  GET  /health
+Each model's request schema and task behavior come from its own manifest.
+"""
 import json
-import pickle
+import os
+import sys
 import time
 from contextlib import asynccontextmanager
-from typing import List
+from typing import Any, List
 
 import numpy as np
-import onnxruntime as ort
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationError
 
-MODEL_PKL  = os.getenv("MODEL_PKL",  "artifacts/model.pkl")
-MODEL_ONNX = os.getenv("MODEL_ONNX", "artifacts/model_fp32.onnx")
-MODEL_TRT  = os.getenv("MODEL_TRT",  "artifacts/model_int8.trt")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-FEATURE_COLS = [
-    "tenure_months", "monthly_charges", "total_charges",
-    "num_products", "support_calls", "payment_delay_days",
-    "contract_type", "internet_service", "online_security", "tech_support",
-]
+from common import build_request_model, records_to_array  # noqa: E402
+from common import onnx_utils                              # noqa: E402
 
-models: dict = {}
+MODELS_INDEX = os.getenv("MODELS_INDEX", "artifacts/models.json")
+
+MODELS: dict[str, dict] = {}   # model_name -> {manifest, request_model, task, features, loaded}
 
 
-class ChurnRequest(BaseModel):
-    tenure_months:      float
-    monthly_charges:    float
-    total_charges:      float
-    num_products:       int
-    support_calls:      int
-    payment_delay_days: int
-    contract_type:      int
-    internet_service:   int
-    online_security:    int
-    tech_support:       int
-
-    @field_validator("contract_type")
-    @classmethod
-    def validate_contract(cls, v):
-        if v not in (0, 1, 2):
-            raise ValueError("contract_type must be 0, 1, or 2")
-        return v
-
-
-class PredictResponse(BaseModel):
-    churn_probability: float
-    churn_prediction:  int
-    model_version:     str
-    latency_ms:        float
+def _load_variant(variant, manifest):
+    kind = variant["kind"]
+    if kind == "onnx":
+        return ("onnx", onnx_utils.make_session(variant["path"]))
+    if kind == "native":
+        from adapters import load_model
+        return ("native", load_model(manifest["framework"], variant["path"],
+                                     task=manifest["task"], num_classes=manifest["num_classes"]))
+    if kind == "trt":
+        try:
+            import tensorrt as trt
+            with open(variant["path"], "rb") as f:
+                engine = trt.Runtime(trt.Logger(trt.Logger.WARNING)).deserialize_cuda_engine(f.read())
+            return ("trt", engine)
+        except Exception:
+            fp32 = next((v for v in manifest["variants"] if v["name"] == "onnx_fp32"), None)
+            if fp32:
+                return ("onnx", onnx_utils.make_session(fp32["path"]))
+            raise
+    raise ValueError(f"Unknown variant kind: {kind}")
 
 
-class CompareResponse(BaseModel):
-    input:   dict
-    results: List[PredictResponse]
-
-
-def _to_array(req: ChurnRequest) -> np.ndarray:
-    return np.array(
-        [[getattr(req, col) for col in FEATURE_COLS]], dtype=np.float32
-    )
-
-
-def _load_trt_or_fallback():
-    fallback = MODEL_TRT + ".json"
-    if os.path.exists(fallback):
-        with open(fallback) as f:
-            marker = json.load(f)
-        if marker.get("fallback"):
-            return ("onnx_fallback", ort.InferenceSession(
-                marker["use_onnx"], providers=["CPUExecutionProvider"]
-            ))
-
-    try:
-        import tensorrt as trt
-        import pycuda.driver as cuda
-        import pycuda.autoinit  # noqa
-        with open(MODEL_TRT, "rb") as f:
-            engine_bytes = f.read()
-        runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
-        engine  = runtime.deserialize_cuda_engine(engine_bytes)
-        return ("trt", engine)
-    except Exception:
-        return ("onnx_fallback", ort.InferenceSession(
-            MODEL_ONNX, providers=["CPUExecutionProvider"]
-        ))
+def _load_model(manifest):
+    loaded = {}
+    for v in [manifest["native"], *manifest["variants"]]:
+        try:
+            loaded[v["name"]] = _load_variant(v, manifest)
+        except Exception as e:
+            print(f"[warn] {manifest['name']}/{v['name']} failed to load: {e}")
+    loaded.setdefault("native", loaded.get(manifest["native"]["name"]))
+    return loaded
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # v1 — pkl
-    with open(MODEL_PKL, "rb") as f:
-        models["v1"] = ("pkl", pickle.load(f))
-
-    # v2 — ONNX FP32
-    models["v2"] = ("onnx", ort.InferenceSession(
-        MODEL_ONNX, providers=["CPUExecutionProvider"]
-    ))
-
-    # v3 — TRT or ONNX fallback
-    models["v3"] = _load_trt_or_fallback()
-
-    print("Models loaded: v1=pkl, v2=onnx, v3=" + models["v3"][0])
+    with open(MODELS_INDEX) as f:
+        index = json.load(f)
+    for entry in index["models"]:
+        with open(entry["manifest"]) as f:
+            manifest = json.load(f)
+        loaded = _load_model(manifest)
+        if not loaded:
+            print(f"[warn] no servable variants for {manifest['name']}; skipping.")
+            continue
+        MODELS[manifest["name"]] = {
+            "manifest": manifest, "task": manifest["task"], "features": manifest["features"],
+            "request_model": build_request_model(manifest["features"], f"{manifest['name']}_Request"),
+            "loaded": loaded,
+        }
+        print(f"Loaded '{manifest['name']}' [{manifest['framework']}/{manifest['task']}] "
+              f"variants: {list(loaded.keys())}")
+    if not MODELS:
+        raise RuntimeError("No models could be loaded from the index.")
     yield
-    models.clear()
+    MODELS.clear()
 
 
-app = FastAPI(title="XGB Churn API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Multi-Model Compression API", version="3.0.0", lifespan=lifespan)
 
 
-def _infer_pkl(model, X: np.ndarray):
-    proba = model.predict_proba(X)[0, 1]
-    return float(proba)
+class PredictResponse(BaseModel):
+    model: str
+    variant: str
+    prediction: Any
+    probability: Any = None
+    latency_ms: float
 
 
-def _infer_onnx(sess: ort.InferenceSession, X: np.ndarray):
-    inp  = sess.get_inputs()[0].name
-    out  = sess.run(None, {inp: X})
-    if isinstance(out[1], list):
-        proba = out[1][0][1]
-    elif hasattr(out[1], 'ndim') and out[1].ndim == 2:
-        proba = out[1][0, 1]
-    else:
-        proba = float(out[0][0])
-    return float(proba)
+class CompareResponse(BaseModel):
+    model: str
+    input: dict
+    results: List[PredictResponse]
 
 
-def _infer_trt(engine, X: np.ndarray):
+def _get_model(name):
+    if name not in MODELS:
+        raise HTTPException(404, f"Model '{name}' not found. Available: {list(MODELS)}")
+    return MODELS[name]
+
+
+def _parse(entry, payload: dict):
+    try:
+        return entry["request_model"](**payload)
+    except ValidationError as e:
+        raise HTTPException(422, [{"loc": list(x["loc"]), "msg": x["msg"], "type": x["type"]}
+                                  for x in e.errors()])
+
+
+def _infer(kind_model, X, task):
+    kind, model = kind_model
+    if kind == "native":
+        return np.asarray(model.predict(X))
+    if kind == "onnx":
+        return np.asarray(onnx_utils.extract_proba(onnx_utils.run(model, X), task))
     import pycuda.driver as cuda
-    context = engine.create_execution_context()
-    output  = np.empty((1,), dtype=np.float32)
-    d_in    = cuda.mem_alloc(X.nbytes)
-    d_out   = cuda.mem_alloc(output.nbytes)
-    stream  = cuda.Stream()
-    cuda.memcpy_htod_async(d_in, X, stream)
+    import pycuda.autoinit  # noqa
+    context = model.create_execution_context()
+    out = np.empty((len(X),), dtype=np.float32)
+    d_in, d_out = cuda.mem_alloc(X.nbytes), cuda.mem_alloc(out.nbytes)
+    stream = cuda.Stream()
+    cuda.memcpy_htod_async(d_in, np.ascontiguousarray(X), stream)
     context.execute_async_v2([int(d_in), int(d_out)], stream.handle)
-    cuda.memcpy_dtoh_async(output, d_out, stream)
+    cuda.memcpy_dtoh_async(out, d_out, stream)
     stream.synchronize()
-    return float(output[0])
+    return out
 
 
-def predict_version(version: str, req: ChurnRequest) -> PredictResponse:
-    if version not in models:
-        raise HTTPException(404, f"Version {version} not found")
+def _format(proba, task):
+    if task == "regression":
+        return float(proba.ravel()[0]), None
+    if task == "binary_classification":
+        p = float(proba.ravel()[0])
+        return int(p > 0.5), round(p, 6)
+    row = proba[0] if proba.ndim == 2 else proba
+    return int(np.argmax(row)), [round(float(x), 6) for x in row]
 
-    kind, model = models[version]
-    X           = _to_array(req)
 
+def _predict(model_name, variant, req) -> PredictResponse:
+    entry = _get_model(model_name)
+    if variant not in entry["loaded"]:
+        raise HTTPException(404, f"Variant '{variant}' not in {model_name}. "
+                                 f"Have: {list(entry['loaded'])}")
+    X = records_to_array(req.model_dump(), entry["features"])
     t0 = time.perf_counter()
-    if kind == "pkl":
-        proba = _infer_pkl(model, X)
-    elif kind in ("onnx", "onnx_fallback"):
-        proba = _infer_onnx(model, X)
-    else:
-        proba = _infer_trt(model, X)
+    proba = _infer(entry["loaded"][variant], X, entry["task"])
     latency = (time.perf_counter() - t0) * 1000
-
-    return PredictResponse(
-        churn_probability=round(proba, 6),
-        churn_prediction=int(proba > 0.5),
-        model_version=f"{version}/{kind}",
-        latency_ms=round(latency, 3),
-    )
+    pred, prob = _format(proba, entry["task"])
+    return PredictResponse(model=model_name, variant=variant, prediction=pred,
+                           probability=prob, latency_ms=round(latency, 3))
 
 
-@app.post("/predict/v1", response_model=PredictResponse)
-def predict_v1(req: ChurnRequest):
-    return predict_version("v1", req)
+@app.post("/predict/{model}/{variant}", response_model=PredictResponse)
+def predict(model: str, variant: str, payload: dict):
+    entry = _get_model(model)
+    return _predict(model, variant, _parse(entry, payload))
 
 
-@app.post("/predict/v2", response_model=PredictResponse)
-def predict_v2(req: ChurnRequest):
-    return predict_version("v2", req)
+@app.post("/compare/{model}", response_model=CompareResponse)
+def compare(model: str, payload: dict):
+    entry = _get_model(model)
+    req = _parse(entry, payload)
+    manifest = entry["manifest"]
+    names = [manifest["native"]["name"]] + [v["name"] for v in manifest["variants"]]
+    results = [_predict(model, n, req) for n in names if n in entry["loaded"]]
+    return CompareResponse(model=model, input=req.model_dump(), results=results)
 
 
-@app.post("/predict/v3", response_model=PredictResponse)
-def predict_v3(req: ChurnRequest):
-    return predict_version("v3", req)
-
-
-@app.post("/compare", response_model=CompareResponse)
-def compare(req: ChurnRequest):
-    results = [predict_version(v, req) for v in ("v1", "v2", "v3")]
-    return CompareResponse(input=req.model_dump(), results=results)
+@app.get("/models")
+def models():
+    return {m: {"task": e["task"], "variants": list(e["loaded"].keys()),
+                "features": [f["name"] for f in e["features"]]}
+            for m, e in MODELS.items()}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "loaded_versions": list(models.keys())}
+    return {"status": "ok", "models": list(MODELS.keys())}

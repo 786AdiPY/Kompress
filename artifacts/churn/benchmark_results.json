@@ -1,0 +1,35 @@
+[
+  {
+    "model": "native_xgboost",
+    "kind": "native",
+    "latency_ms": 4.687,
+    "model_size_kb": 870.3,
+    "note": "uncompressed reference",
+    "accuracy": 0.97,
+    "f1": 0.837,
+    "auc": 0.9904,
+    "speedup_vs_native": 1.0
+  },
+  {
+    "model": "onnx_fp32",
+    "kind": "onnx",
+    "latency_ms": 14.424,
+    "model_size_kb": 623.9,
+    "note": "baseline (no compression)",
+    "accuracy": 0.97,
+    "f1": 0.837,
+    "auc": 0.9904,
+    "speedup_vs_native": 0.32
+  },
+  {
+    "model": "trt_int8",
+    "kind": "onnx",
+    "latency_ms": 13.525,
+    "model_size_kb": 623.9,
+    "note": "fallback: no GPU/TensorRT",
+    "accuracy": 0.97,
+    "f1": 0.837,
+    "auc": 0.9904,
+    "speedup_vs_native": 0.35
+  }
+]

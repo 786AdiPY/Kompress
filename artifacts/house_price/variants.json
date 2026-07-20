@@ -1,0 +1,49 @@
+{
+  "name": "house_price",
+  "framework": "sklearn",
+  "task": "regression",
+  "num_classes": 2,
+  "features": [
+    {
+      "name": "sqft",
+      "dtype": "float"
+    },
+    {
+      "name": "bedrooms",
+      "dtype": "int"
+    },
+    {
+      "name": "bathrooms",
+      "dtype": "int"
+    },
+    {
+      "name": "age_years",
+      "dtype": "int"
+    }
+  ],
+  "target": "price",
+  "test_csv": "data/house_test.csv",
+  "native": {
+    "name": "native_sklearn",
+    "kind": "native",
+    "path": "artifacts/house_price/model.pkl",
+    "size_kb": 53888.8,
+    "note": "uncompressed reference"
+  },
+  "variants": [
+    {
+      "name": "onnx_fp32",
+      "kind": "onnx",
+      "path": "artifacts\\house_price\\model_fp32.onnx",
+      "size_kb": 29506.0,
+      "note": "baseline (no compression)"
+    },
+    {
+      "name": "trt_int8",
+      "kind": "onnx",
+      "path": "artifacts\\house_price\\model_fp32.onnx",
+      "size_kb": 29506.0,
+      "note": "fallback: no GPU/TensorRT"
+    }
+  ]
+}

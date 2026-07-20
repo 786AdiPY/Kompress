@@ -1,0 +1,24 @@
+artifact_path: file:C:/Users/Karthikeyan M/Desktop/MLops Compression/mlops-pipeline-for-model-compression-/mlflow_store/artifacts/2/models/m-138d9eac5dbd4c459448affc8981d195/artifacts
+flavors:
+  onnx:
+    code: null
+    data: model.onnx
+    onnx_session_options: null
+    onnx_version: 1.22.0
+    providers:
+    - CUDAExecutionProvider
+    - CPUExecutionProvider
+  python_function:
+    data: model.onnx
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.onnx
+    python_version: 3.13.2
+mlflow_version: 3.14.0
+model_id: m-138d9eac5dbd4c459448affc8981d195
+model_size_bytes: 638851
+model_uuid: m-138d9eac5dbd4c459448affc8981d195
+prompts: null
+run_id: b4c92eed21a44ef69674dcc8063f359d
+utc_time_created: '2026-07-11 08:34:48.926478'

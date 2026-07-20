@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  pipeline.yaml — single source of truth for the compression pipeline.
+#
+#  Point it at ONE or MANY models. Every stage loops over `models:` and
+#  compresses each one independently (its own ONNX export, INT8 variants,
+#  benchmark, gate, registry entry, and serving endpoints). Models can be
+#  totally unrelated — different frameworks, tasks, features and datasets.
+# ─────────────────────────────────────────────────────────────────────────────
+
+project: compression-demo
+
+# ── Global defaults (any model may override these) ───────────────────────────
+compression:
+  # onnx_fp32 (baseline) | onnx_int8_dynamic ⭐ | onnx_int8_static | trt_int8 (GPU)
+  methods:
+    - onnx_fp32
+    - onnx_int8_dynamic
+    - onnx_int8_static
+    - trt_int8
+
+gate:
+  max_acc_drop:  0.01   # classification: max accuracy drop vs native
+  max_auc_drop:  0.01   # classification: max AUC drop vs native
+  max_rmse_rise: 0.05   # regression: max RMSE increase vs native
+
+deploy:
+  target: huggingface_spaces   # huggingface_spaces | none
+  space_id: ""                 # "your-username/your-space"; token via HF_TOKEN
+  sdk: docker
+
+# ── Models to compress ───────────────────────────────────────────────────────
+models:
+
+  # (1) Churn classifier — trained by the built-in classic-ML trainer.
+  - name: churn
+    framework: xgboost               # xgboost | lightgbm | sklearn | pytorch
+    task: binary_classification      # binary_/multiclass_classification | regression
+    artifact: artifacts/churn/model.pkl
+    num_classes: 2
+    target: churn
+    trainable: true                  # built-in trainer will produce this artifact
+    data:
+      train: data/train.csv
+      test:  data/test.csv
+    features:
+      - { name: tenure_months,      dtype: float }
+      - { name: monthly_charges,    dtype: float }
+      - { name: total_charges,      dtype: float }
+      - { name: num_products,       dtype: int   }
+      - { name: support_calls,      dtype: int   }
+      - { name: payment_delay_days, dtype: int   }
+      - { name: contract_type,      dtype: int, choices: [0, 1, 2] }
+      - { name: internet_service,   dtype: int   }
+      - { name: online_security,    dtype: int   }
+      - { name: tech_support,       dtype: int   }
+
+  # (2) A totally separate house-price regressor — different framework (sklearn),
+  #     different task (regression), different features and dataset. Bring your
+  #     own trained artifact; compression/benchmark use its own test CSV.
+  - name: house_price
+    framework: sklearn
+    task: regression
+    artifact: artifacts/house_price/model.pkl
+    target: price
+    trainable: false                 # you provide the trained artifact
+    data:
+      test: data/house_test.csv
+    features:
+      - { name: sqft,      dtype: float }
+      - { name: bedrooms,  dtype: int   }
+      - { name: bathrooms, dtype: int   }
+      - { name: age_years, dtype: int   }

@@ -1,0 +1,24 @@
+{
+  "model": "churn",
+  "baseline": "native_xgboost",
+  "task": "binary_classification",
+  "checks": [
+    {
+      "variant": "onnx_fp32",
+      "latency_ms": 14.424,
+      "speedup": 0.32,
+      "passed": true,
+      "acc_drop": 0.0,
+      "auc_drop": 0.0
+    },
+    {
+      "variant": "trt_int8",
+      "latency_ms": 13.525,
+      "speedup": 0.35,
+      "passed": true,
+      "acc_drop": 0.0,
+      "auc_drop": 0.0
+    }
+  ],
+  "passed": true
+}

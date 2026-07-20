@@ -1,0 +1,22 @@
+{
+  "model": "house_price",
+  "baseline": "native_sklearn",
+  "task": "regression",
+  "checks": [
+    {
+      "variant": "onnx_fp32",
+      "latency_ms": 8.611,
+      "speedup": 14.41,
+      "passed": true,
+      "rmse_rise": -0.0031
+    },
+    {
+      "variant": "trt_int8",
+      "latency_ms": 96.152,
+      "speedup": 1.29,
+      "passed": true,
+      "rmse_rise": -0.0031
+    }
+  ],
+  "passed": true
+}

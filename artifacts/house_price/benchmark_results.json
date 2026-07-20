@@ -1,0 +1,32 @@
+[
+  {
+    "model": "native_sklearn",
+    "kind": "native",
+    "latency_ms": 124.118,
+    "model_size_kb": 53888.8,
+    "note": "uncompressed reference",
+    "rmse": 16600.1652,
+    "mae": 13211.4142,
+    "speedup_vs_native": 1.0
+  },
+  {
+    "model": "onnx_fp32",
+    "kind": "onnx",
+    "latency_ms": 8.611,
+    "model_size_kb": 29506.0,
+    "note": "baseline (no compression)",
+    "rmse": 16600.1621,
+    "mae": 13211.4106,
+    "speedup_vs_native": 14.41
+  },
+  {
+    "model": "trt_int8",
+    "kind": "onnx",
+    "latency_ms": 96.152,
+    "model_size_kb": 29506.0,
+    "note": "fallback: no GPU/TensorRT",
+    "rmse": 16600.1621,
+    "mae": 13211.4106,
+    "speedup_vs_native": 1.29
+  }
+]

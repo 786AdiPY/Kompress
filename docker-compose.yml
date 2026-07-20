@@ -1,13 +1,26 @@
-version: "3.9"
+# Framework-agnostic compression pipeline.
+# Every stage runs the SAME shared image (built once from the root Dockerfile)
+# with a different command, so common/ adapters/ compressors/ are available to
+# all of them. Stages exchange files through the shared `artifacts` volume and
+# the bind-mounted ./data — identical to the artifacts/variants.json flow the
+# local run_pipeline.bat uses.
 
-# Shared volume where all pipeline steps exchange artifacts
 volumes:
   artifacts:
   mlflow_data:
 
-# Shared data volume (populated by generate step)
 networks:
   pipeline:
+
+# Shared config for every pipeline stage (one image, one context).
+x-app: &app
+  build: .
+  image: compression-pipeline:local
+  volumes:
+    - ./data:/app/data
+    - artifacts:/app/artifacts
+  networks:
+    - pipeline
 
 services:
 
@@ -23,157 +36,108 @@ services:
     networks:
       - pipeline
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 10s
       timeout: 5s
       retries: 10
 
   # ── Generate synthetic data ────────────────────────────────────────────────
   generate:
-    image: python:3.11-slim
+    <<: *app
     container_name: generate
-    volumes:
-      - ./data:/app/data
-    command: >
-      bash -c "pip install pandas numpy scikit-learn -q &&
-               python /app/data/generate.py --out /app/data"
-    working_dir: /app
-    networks:
-      - pipeline
+    command: ["python", "data/generate.py", "--out", "data"]
 
-  # ── Train XGBoost ──────────────────────────────────────────────────────────
+  # ── Train baseline (classic-ML) ────────────────────────────────────────────
   train:
-    build: ./train
+    <<: *app
     container_name: train
     depends_on:
       mlflow:
         condition: service_healthy
       generate:
         condition: service_completed_successfully
-    volumes:
-      - ./data:/data:ro
-      - artifacts:/artifacts
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
-      DATA_DIR: /data
-      MODEL_OUT: /artifacts/model.pkl
-    networks:
-      - pipeline
+      DATA_DIR: data
+    command: ["python", "train/train.py"]
 
-  # ── Compress pkl → ONNX → TRT ──────────────────────────────────────────────
+  # ── Compress: any model → ONNX FP32 → INT8 variants (manifest) ─────────────
   compress:
-    build: ./compress
+    <<: *app
     container_name: compress
     depends_on:
       train:
         condition: service_completed_successfully
-    volumes:
-      - artifacts:/artifacts
-    environment:
-      MODEL_PKL:  /artifacts/model.pkl
-      MODEL_ONNX: /artifacts/model_fp32.onnx
-      MODEL_TRT:  /artifacts/model_int8.trt
-      META_PATH:  /artifacts/model_meta.json
-    networks:
-      - pipeline
+    command: ["python", "compress/compress.py"]
 
-  # ── Benchmark all 3 model variants ────────────────────────────────────────
+  # ── Benchmark native + all compressed variants ─────────────────────────────
   benchmark:
-    build: ./benchmark
+    <<: *app
     container_name: benchmark
     depends_on:
       compress:
         condition: service_completed_successfully
-    volumes:
-      - ./data:/data:ro
-      - artifacts:/artifacts
     environment:
-      MODEL_PKL:   /artifacts/model.pkl
-      MODEL_ONNX:  /artifacts/model_fp32.onnx
-      MODEL_TRT:   /artifacts/model_int8.trt
-      TEST_CSV:    /data/test.csv
-      RESULTS_OUT: /artifacts/benchmark_results.json
-      RUNS:        "200"
-    networks:
-      - pipeline
+      RUNS: "200"
+    command: ["python", "benchmark/benchmark.py"]
 
   # ── Quality gate ───────────────────────────────────────────────────────────
   gate:
-    build: ./gate
+    <<: *app
     container_name: gate
     depends_on:
       benchmark:
         condition: service_completed_successfully
-    volumes:
-      - artifacts:/artifacts
-    environment:
-      RESULTS_PATH:    /artifacts/benchmark_results.json
-      GATE_REPORT_OUT: /artifacts/gate_report.json
-      MAX_ACC_DROP:    "0.01"
-      MAX_AUC_DROP:    "0.01"
-    networks:
-      - pipeline
+    command: ["python", "gate/gate.py"]
 
-  # ── Register best model ────────────────────────────────────────────────────
+  # ── Register best variant to MLflow ────────────────────────────────────────
   registry:
-    build: ./registry
+    <<: *app
     container_name: registry
     depends_on:
       gate:
         condition: service_completed_successfully
       mlflow:
         condition: service_healthy
-    volumes:
-      - artifacts:/artifacts
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
-      RESULTS_PATH:        /artifacts/benchmark_results.json
-      GATE_REPORT:         /artifacts/gate_report.json
-      MODEL_PKL:           /artifacts/model.pkl
-      MODEL_ONNX:          /artifacts/model_fp32.onnx
-      MODEL_TRT:           /artifacts/model_int8.trt
-      REGISTRY_NAME:       churn-detector
-    networks:
-      - pipeline
+    command: ["python", "registry/register.py"]
 
-  # ── Serve (FastAPI) ────────────────────────────────────────────────────────
+  # ── Deploy to Hugging Face Spaces (self-skips without HF_TOKEN/space_id) ────
+  deploy:
+    <<: *app
+    container_name: deploy
+    depends_on:
+      gate:
+        condition: service_completed_successfully
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      SPACE_ID: ${SPACE_ID:-}
+    command: ["python", "deploy/hf_spaces_deploy.py"]
+
+  # ── Serve (FastAPI, manifest-driven) ───────────────────────────────────────
   serve:
-    build: ./serve
+    <<: *app
     container_name: serve
     depends_on:
       registry:
         condition: service_completed_successfully
-    volumes:
-      - artifacts:/artifacts:ro
-    environment:
-      MODEL_PKL:  /artifacts/model.pkl
-      MODEL_ONNX: /artifacts/model_fp32.onnx
-      MODEL_TRT:  /artifacts/model_int8.trt
     ports:
       - "8000:8000"
-    networks:
-      - pipeline
+    command: ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # ── Drift monitor ──────────────────────────────────────────────────────────
   monitor:
-    build: ./monitor
+    <<: *app
     container_name: monitor
     depends_on:
       serve:
         condition: service_healthy
-    volumes:
-      - ./data:/data:ro
-      - artifacts:/artifacts
     environment:
-      TRAIN_STATS_PATH: /artifacts/model_train_stats.json
-      INCOMING_CSV:     /data/test.csv
-      DRIFT_REPORT_OUT: /artifacts/drift_report.json
-      PSI_WARN:         "0.1"
-      PSI_ALERT:        "0.2"
-    networks:
-      - pipeline
+      INCOMING_CSV: data/test.csv
+    command: ["python", "monitor/drift.py"]
