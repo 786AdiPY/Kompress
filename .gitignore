@@ -1,0 +1,29 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ── Kompress runtime state (generated per run — never commit) ────────────────
+# api_runs: per-job working dirs (Front Door B)
+# queue:    filesystem job queue (worker/queue.py default)
+# mlruns / mlartifacts: MLflow artifact store when no server is configured
+api_runs/
+queue/
+mlruns/
+mlartifacts/
+*.db
+mlflow_store/mlflow.db
+
+# ── Node / web (also covered by web/.gitignore) ─────────────────────────────
+node_modules/
+dist/
+
+# ── OS / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+*.log
+.idea/
+.vscode/

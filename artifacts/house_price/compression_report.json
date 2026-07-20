@@ -1,0 +1,83 @@
+{
+  "model": "house_price",
+  "framework": "sklearn",
+  "task": "regression",
+  "target_hardware": "cpu-generic",
+  "base_model": {
+    "path": "artifacts/house_price/model.pkl",
+    "hash": "a65e17f034c260a3f60a0b7411fbbdcde610346d11100eef0db96e8053208e40",
+    "size_kb": 53888.8,
+    "mlflow_run_id": null
+  },
+  "best_variant": {
+    "name": "onnx_fp32",
+    "kind": "onnx",
+    "format": "onnx-fp32",
+    "size_kb": 29506.0,
+    "note": "baseline (no compression)"
+  },
+  "deltas": {
+    "size_delta_pct": -45.25,
+    "latency_ms_delta": -115.507,
+    "speedup_vs_native": 14.41,
+    "accuracy_delta": null,
+    "auc_delta": null,
+    "f1_delta": null,
+    "rmse_delta": -0.0031
+  },
+  "variants": [
+    {
+      "model": "native_sklearn",
+      "kind": "native",
+      "latency_ms": 124.118,
+      "model_size_kb": 53888.8,
+      "note": "uncompressed reference",
+      "rmse": 16600.1652,
+      "mae": 13211.4142,
+      "speedup_vs_native": 1.0
+    },
+    {
+      "model": "onnx_fp32",
+      "kind": "onnx",
+      "latency_ms": 8.611,
+      "model_size_kb": 29506.0,
+      "note": "baseline (no compression)",
+      "rmse": 16600.1621,
+      "mae": 13211.4106,
+      "speedup_vs_native": 14.41
+    },
+    {
+      "model": "trt_int8",
+      "kind": "onnx",
+      "latency_ms": 96.152,
+      "model_size_kb": 29506.0,
+      "note": "fallback: no GPU/TensorRT",
+      "rmse": 16600.1621,
+      "mae": 13211.4106,
+      "speedup_vs_native": 1.29
+    }
+  ],
+  "gate_passed": true,
+  "gate_report": {
+    "model": "house_price",
+    "baseline": "native_sklearn",
+    "task": "regression",
+    "checks": [
+      {
+        "variant": "onnx_fp32",
+        "latency_ms": 8.611,
+        "speedup": 14.41,
+        "passed": true,
+        "rmse_rise": -0.0031
+      },
+      {
+        "variant": "trt_int8",
+        "latency_ms": 96.152,
+        "speedup": 1.29,
+        "passed": true,
+        "rmse_rise": -0.0031
+      }
+    ],
+    "passed": true
+  }
+}

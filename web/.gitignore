@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+
+# Logs
+logs
+*.log
+npm-debug.log*

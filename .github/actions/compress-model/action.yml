@@ -1,0 +1,70 @@
+name: "Compress Model"
+description: >
+  Front Door A reference adapter — run the model-compression plugin as one step
+  in any GitHub Actions workflow. Takes a job manifest, produces the compressed
+  variant + compression_report.json ("the Plan"). Fails the step if the gate fails.
+author: "compression-pipeline"
+
+inputs:
+  job:
+    description: "Path to a job manifest (see plugin/job.schema.json)."
+    required: true
+  artifacts-dir:
+    description: "Where to write compressed artifacts + the report."
+    required: false
+    default: "artifacts"
+  mlflow-tracking-uri:
+    description: "Optional: this repo's / your own MLflow. Omit to run with no MLflow — the report file is then the source of truth."
+    required: false
+    default: ""
+  image:
+    description: "Prebuilt pipeline image to run the plugin in. If empty, the action builds it from the repo root Dockerfile."
+    required: false
+    default: ""
+
+outputs:
+  report:
+    description: "Path to the generated compression_report.json."
+    value: ${{ steps.run.outputs.report }}
+  gate-passed:
+    description: "true if the winning variant passed the accuracy gate."
+    value: ${{ steps.run.outputs.gate_passed }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: run
+      shell: bash
+      env:
+        MLFLOW_TRACKING_URI: ${{ inputs.mlflow-tracking-uri }}
+      run: |
+        set -euo pipefail
+        IMAGE="${{ inputs.image }}"
+        if [ -z "$IMAGE" ]; then
+          IMAGE="compression-pipeline:ci"
+          docker build -t "$IMAGE" "${{ github.action_path }}/../../.."
+        fi
+
+        # The plugin is the same single command every orchestrator calls.
+        docker run --rm \
+          -v "${{ github.workspace }}:/work" -w /work \
+          -e MLFLOW_TRACKING_URI \
+          "$IMAGE" \
+          python plugin/run_job.py \
+            --job "${{ inputs.job }}" \
+            --artifacts-dir "${{ inputs.artifacts-dir }}" \
+          && GATE_PASSED=true || GATE_PASSED=false
+
+        # Discover the report the plugin wrote (one model per job).
+        REPORT=$(find "${{ inputs.artifacts-dir }}" -name compression_report.json | head -1)
+        echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+        echo "gate_passed=$GATE_PASSED" >> "$GITHUB_OUTPUT"
+
+        echo "### Compression Plan" >> "$GITHUB_STEP_SUMMARY"
+        python -c "import json,sys; d=json.load(open('$REPORT')); \
+          print('| model | best | size Δ | latency Δ | gate |'); \
+          print('|---|---|---|---|---|'); \
+          print(f\"| {d['model']} | {d['best_variant']['name']} | {d['deltas']['size_delta_pct']:+.1f}% | {d['deltas']['latency_ms_delta']:+.2f}ms | {'PASS' if d['gate_passed'] else 'FAIL'} |\")" \
+          >> "$GITHUB_STEP_SUMMARY"
+
+        [ "$GATE_PASSED" = "true" ]

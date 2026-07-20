@@ -1,0 +1,64 @@
+/* Co-located layout for the Submit form. Everything else uses the shared
+   semantic classes from global.css; this only adds a responsive field grid
+   and a couple of form-note treatments. */
+.submit-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+.submit-form__grid .field {
+  margin-bottom: 0;
+}
+.submit-form__grid .field--full {
+  grid-column: 1 / -1;
+}
+@media (max-width: 560px) {
+  .submit-form__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+.form-note--boundary {
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.field__hint {
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--color-muted);
+}
+
+.advanced {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+.advanced__toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+.advanced__toggle:hover {
+  text-decoration: underline;
+}
+.advanced__body {
+  margin-top: var(--space-4);
+}
+
+.submit-actions {
+  margin-top: var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}

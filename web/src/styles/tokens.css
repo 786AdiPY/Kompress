@@ -1,0 +1,66 @@
+/* Design tokens. The whole look is driven from here — swap these values to
+   re-theme without touching component markup. Light is the default; the dark
+   block overrides via prefers-color-scheme. */
+:root {
+  /* color */
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f2f5;
+  --color-text: #16191d;
+  --color-muted: #667085;
+  --color-border: #e3e6ea;
+  --color-primary: #2563eb;
+  --color-primary-contrast: #ffffff;
+  --color-good: #15803d;
+  --color-bad: #dc2626;
+  --color-warn: #b45309;
+
+  /* radius */
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+
+  /* spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* typography */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.85rem;
+  --font-size-base: 0.95rem;
+  --font-size-lg: 1.15rem;
+  --font-size-xl: 1.5rem;
+  --line-height: 1.5;
+
+  /* elevation */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.1), 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0e1116;
+    --color-surface: #161a21;
+    --color-surface-2: #1d222b;
+    --color-text: #e6e8eb;
+    --color-muted: #98a2b3;
+    --color-border: #262b34;
+    --color-primary: #3b82f6;
+    --color-primary-contrast: #0e1116;
+    --color-good: #22c55e;
+    --color-bad: #ef4444;
+    --color-warn: #f59e0b;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
