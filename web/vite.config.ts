@@ -9,7 +9,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.KOMPRESS_API ?? 'http://localhost:8000',
         changeOrigin: true,
         // Backend routes live at the root (/health, /runs, ...), so strip the
         // '/api' prefix the client uses as its dev base URL.

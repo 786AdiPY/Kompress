@@ -1,26 +1,47 @@
-/* Design tokens. The whole look is driven from here — swap these values to
-   re-theme without touching component markup. Light is the default; the dark
-   block overrides via prefers-color-scheme. */
+/* ===================================================================
+   Design tokens — the whole look is driven from here.
+   Swap values to re-theme without touching component markup.
+   Light is the default; the dark block overrides via prefers-color-scheme.
+   =================================================================== */
 :root {
-  /* color */
-  --color-bg: #f5f6f8;
+  /* ── brand ─────────────────────────────────────────────────────── */
+  --color-brand: #0f172a;
+  --color-brand-hover: #1e293b;
+  --color-brand-active: #27364d;
+  --color-brand-contrast: #ffffff;
+
+  /* ── surfaces & text ───────────────────────────────────────────── */
+  --color-bg: #f6f7f9;
   --color-surface: #ffffff;
-  --color-surface-2: #f0f2f5;
-  --color-text: #16191d;
-  --color-muted: #667085;
-  --color-border: #e3e6ea;
+  --color-surface-2: #f1f3f6;
+  --color-surface-3: #e9edf2;
+  --color-text: #0f172a;
+  --color-text-2: #334155;
+  --color-muted: #64748b;
+  --color-faint: #94a3b8;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  /* ── accent (links, active nav, focus, info) ───────────────────── */
   --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
   --color-primary-contrast: #ffffff;
+
+  /* ── semantic ──────────────────────────────────────────────────── */
   --color-good: #15803d;
+  --color-good-strong: #16a34a;
   --color-bad: #dc2626;
   --color-warn: #b45309;
+  --color-info: #0369a1;
+  --color-violet: #6d28d9;
 
-  /* radius */
-  --radius: 8px;
-  --radius-sm: 5px;
-  --radius-lg: 12px;
+  /* ── radius ────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
 
-  /* spacing scale */
+  /* ── spacing scale ─────────────────────────────────────────────── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -28,39 +49,85 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --space-8: 64px;
 
-  /* typography */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+  /* ── typography ────────────────────────────────────────────────── */
+  --font-sans: 'Lexend', system-ui, -apple-system, 'Segoe UI', Roboto, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono',
     monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.85rem;
   --font-size-base: 0.95rem;
   --font-size-lg: 1.15rem;
-  --font-size-xl: 1.5rem;
-  --line-height: 1.5;
+  --font-size-xl: 1.45rem;
+  --font-size-2xl: 1.8rem;
+  --line-height: 1.55;
 
-  /* elevation */
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --shadow: 0 1px 3px rgba(16, 24, 40, 0.1), 0 1px 2px rgba(16, 24, 40, 0.06);
+  /* ── elevation ─────────────────────────────────────────────────── */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08),
+    0 2px 4px -2px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08),
+    0 4px 6px -4px rgba(15, 23, 42, 0.08);
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.05),
+    0 10px 20px -5px rgba(15, 23, 42, 0.07);
+  --shadow-card-hover: 0 1px 3px rgba(15, 23, 42, 0.05),
+    0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 10px 10px -5px rgba(15, 23, 42, 0.04);
+
+  /* legacy aliases kept for co-located page styles */
+  --shadow: var(--shadow-sm);
+
+  /* ── motion ────────────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-fast: 150ms var(--ease);
+  --transition: 250ms var(--ease);
+
+  /* ── stacking ──────────────────────────────────────────────────── */
+  --z-sticky: 1020;
+  --z-popover: 1070;
+
+  /* header height (used for sticky offsets) */
+  --header-h: 60px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #0e1116;
-    --color-surface: #161a21;
-    --color-surface-2: #1d222b;
-    --color-text: #e6e8eb;
-    --color-muted: #98a2b3;
-    --color-border: #262b34;
-    --color-primary: #3b82f6;
-    --color-primary-contrast: #0e1116;
-    --color-good: #22c55e;
-    --color-bad: #ef4444;
-    --color-warn: #f59e0b;
+    --color-brand: #e2e8f0;
+    --color-brand-hover: #f1f5f9;
+    --color-brand-active: #cbd5e1;
+    --color-brand-contrast: #0f172a;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --color-bg: #0b0e14;
+    --color-surface: #131720;
+    --color-surface-2: #1a1f2b;
+    --color-surface-3: #222836;
+    --color-text: #e6e9ef;
+    --color-text-2: #c3cad6;
+    --color-muted: #94a3b8;
+    --color-faint: #64748b;
+    --color-border: #232a38;
+    --color-border-strong: #313a4d;
+
+    --color-primary: #60a5fa;
+    --color-primary-hover: #93c5fd;
+    --color-primary-contrast: #0b0e14;
+
+    --color-good: #4ade80;
+    --color-good-strong: #22c55e;
+    --color-bad: #f87171;
+    --color-warn: #fbbf24;
+    --color-info: #38bdf8;
+    --color-violet: #a78bfa;
+
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.55),
+      0 4px 6px -4px rgba(0, 0, 0, 0.5);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 20px -5px rgba(0, 0, 0, 0.45);
+    --shadow-card-hover: 0 1px 3px rgba(0, 0, 0, 0.4),
+      0 20px 25px -5px rgba(0, 0, 0, 0.55), 0 10px 10px -5px rgba(0, 0, 0, 0.35);
   }
 }

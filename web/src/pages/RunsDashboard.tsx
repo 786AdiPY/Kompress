@@ -46,12 +46,12 @@ export default function RunsDashboard() {
             The review queue for self-serve compression jobs.
           </span>
         </div>
-        <Link to="/submit" className="btn btn--primary">
+        <Link to="/submit" className="btn btn--primary" data-tour="submit-job">
           Submit new job
         </Link>
       </header>
 
-      <nav className="tabs" aria-label="Filter runs by status">
+      <nav className="tabs" aria-label="Filter runs by status" data-tour="status-tabs">
         {TABS.map((tab) => {
           const active = tab.value === status;
           return (
@@ -68,7 +68,7 @@ export default function RunsDashboard() {
         })}
       </nav>
 
-      <div className="card">
+      <div className="card" data-tour="runs-table">
         {isLoading ? (
           <Loading label="Loading runs…" />
         ) : isError ? (
@@ -79,9 +79,13 @@ export default function RunsDashboard() {
           <RunsTable runs={runs} onOpen={(id) => navigate(`/runs/${id}`)} />
         )}
 
-        {!isLoading && !isError && isFetching && (
-          <p className="muted" style={{ marginTop: 'var(--space-3)' }}>
-            Refreshing…
+        {!isLoading && !isError && (
+          <p className="live-note muted" aria-live="polite">
+            <span
+              className={isFetching ? 'live-dot live-dot--active' : 'live-dot'}
+              aria-hidden="true"
+            />
+            {isFetching ? 'Refreshing…' : 'Live — refreshes every few seconds'}
           </p>
         )}
       </div>
