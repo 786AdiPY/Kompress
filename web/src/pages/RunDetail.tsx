@@ -82,7 +82,7 @@ export default function RunDetail() {
           <code className="mono muted">{runId}</code>
         </div>
         {status && <StatusChip status={status} />}
-        <Link to="/" className="rd-backlink">
+        <Link to="/dashboard" className="rd-backlink">
           ← All runs
         </Link>
       </div>

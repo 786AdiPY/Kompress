@@ -7,23 +7,26 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
   isActive ? 'nav-link nav-link--active' : 'nav-link';
 
 /** App chrome: product header + primary nav, with page content rendered as
- * children. Shared by every page. Also mounts the first-visit product tour. */
+ * children. Shared by every product page. Clicking the brand returns to the
+ * marketing home. Also mounts the first-visit product tour. */
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <Link to="/" className="app-header__brand" data-tour="brand">
+        <Link
+          to="/"
+          className="app-header__brand"
+          data-tour="brand"
+          aria-label="Kompress home"
+        >
           <span className="brand-mark" aria-hidden="true">
             <Shrink size={18} strokeWidth={2.4} />
           </span>
-          <span>
-            <span className="brand-name">Kompress</span>
-            <span className="brand-sub">model compression console</span>
-          </span>
+          <span className="brand-name">Kompress</span>
         </Link>
 
         <nav className="app-nav" aria-label="Primary">
-          <NavLink to="/" end className={navClass} data-tour="nav-dashboard">
+          <NavLink to="/dashboard" className={navClass} data-tour="nav-dashboard">
             Dashboard
           </NavLink>
           <NavLink to="/submit" className={navClass} data-tour="nav-submit">
