@@ -33,7 +33,7 @@ import json
 import os
 import sys
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -172,6 +172,25 @@ def submit_run(job: JobIn, background: BackgroundTasks):
 
     return {"run_id": run_id, "status": mlflow_state.PENDING_GATE,
             "model": model_name, "execution": EXECUTION_MODE}
+
+
+@app.post("/uploads", status_code=201)
+async def upload_file(file: UploadFile = File(...), kind: str = "model"):
+    """Accept a file upload (a user's .pkl model or test CSV), stream it into object
+    storage, and return an s3:// pointer to hand to POST /runs. This is how the UI can
+    offer 'upload a file' while the engine still only ever consumes pointers — the raw
+    bytes never reach the compression process, only the resulting pointer does."""
+    import uuid
+    from common import objstore
+    safe_name = os.path.basename(file.filename or "upload.bin")
+    key = f"uploads/{kind}/{uuid.uuid4().hex}_{safe_name}"
+    try:
+        ref = objstore.upload_fileobj(file.file, key)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            501, f"object storage unavailable ({e}). Set S3_ENDPOINT_URL + AWS_* creds "
+                 f"(MinIO/S3) to enable uploads.")
+    return {"ref": ref, "filename": safe_name, "kind": kind}
 
 
 @app.get("/runs")

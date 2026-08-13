@@ -69,13 +69,13 @@ def resolve_pointer(ref: str, dest_dir: str, what: str) -> str:
 
 def _fetch_s3(ref: str, dest_dir: str, what: str) -> str:
     try:
-        import boto3
+        from common import objstore
     except ImportError:
         raise PointerError(501, "boto3 not installed; cannot fetch s3:// refs.")
-    bucket, _, key = ref[len("s3://"):].partition("/")
-    local = os.path.join(dest_dir, os.path.basename(key))
-    boto3.client("s3").download_file(bucket, key, local)
-    return local
+    try:
+        return objstore.download(ref, dest_dir)  # honors S3_ENDPOINT_URL (MinIO)
+    except Exception as e:  # noqa: BLE001
+        raise PointerError(502, f"failed to fetch {what} from {ref}: {e}")
 
 
 # ── storing the result in MLflow ─────────────────────────────────────────────

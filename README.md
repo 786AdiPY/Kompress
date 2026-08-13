@@ -1,121 +1,203 @@
-# MLOps Pipeline for Model Compression
+# Kompress
 
-A framework-agnostic pipeline that takes **any number of** trained models,
-compresses each every applicable way, benchmarks the variants, gates on accuracy,
-registers the winners to MLflow, and auto-deploys them to a **free Hugging Face
-Space**.
+[![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg)](https://github.com/RichardLitt/standard-readme)
+[![CI](https://img.shields.io/badge/CI-platform%20smoke%20%2B%20web%20build-blue.svg)](.github/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](#license)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](requirements.txt)
 
-Originally XGBoost-churn-only, now driven entirely by [`pipeline.yaml`](pipeline.yaml)
-and multi-model (compresses a whole list of unrelated models in one run).
+> A model-compression **platform** — compress any model (traditional ML or deep learning) for the hardware it will deploy to, review the trade-off, and ship it to production with human consent.
 
+Kompress takes a trained model, its test set, and a **target hardware**, then compresses it every
+applicable way (ONNX FP32, ONNX INT8, TensorRT, …), benchmarks the variants, gates on accuracy,
+and produces a **"Plan"** — a report of the size / latency / accuracy deltas. On approval it
+registers the winner in **MLflow** and lets you promote it to production or export it for the
+target device (server, GPU/Jetson, IoT, mobile).
+
+It exposes the same engine through **two front doors**:
+
+- **Front Door A — orchestration plugin.** Jenkins / GitHub Actions / Airflow call one command
+  (`plugin/run_job.py`) or the hosted API to run compression as a pipeline stage.
+- **Front Door B — self-serve platform.** A REST API + React dashboard where a human submits a
+  model, reviews the Plan, and deploys on consent.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph FDA["Front Door A — orchestration plugin"]
+      ORCH["Jenkins / GitHub Actions / Airflow"]
+    end
+    subgraph FDB["Front Door B — self-serve"]
+      UI["React dashboard"] --> API["FastAPI API"]
+    end
+
+    ORCH -->|run_job.py / hosted API| CORE
+    API -->|enqueue| Q["Queue<br/>(FileQueue · Valkey/Redis · K8s Jobs)"]
+    Q --> WK["Workers<br/>(isolated, scalable)"]
+    WK --> CORE
+
+    subgraph CORE["Compression engine"]
+      direction LR
+      AD["adapters/<br/>xgboost · lightgbm · sklearn · pytorch"] --> ON["ONNX FP32"]
+      ON --> CP["compressors/<br/>onnx_int8 · trt_int8"]
+      CP --> BM["benchmark → gate → report (the Plan)"]
+    end
+
+    CORE --> ML[("MLflow<br/>tracking + model registry")]
+    CORE --> EX["export/<br/>onnx · tensorrt · tflite · coreml"]
+    ML -->|approve → promote / rollback| PROD["Production model"]
+    EX -->|download| DEV["Deploy: server · GPU · IoT · mobile"]
 ```
-train ─▶ compress ─▶ benchmark ─▶ gate ─▶ register ─▶ deploy ─▶ monitor
-        (any model → ONNX FP32 → INT8 variants)     (MLflow)   (HF Spaces)
+
+**State lives in MLflow tags** — `pending_gate → pending_approval → approved | rejected | failed` —
+so the review queue and approval flow need no separate database.
+
+## Table of Contents
+
+- [Background](#background)
+- [Install](#install)
+- [Usage](#usage)
+  - [Front Door A — plugin](#front-door-a--plugin)
+  - [Front Door B — self-serve](#front-door-b--self-serve)
+- [API](#api)
+- [Deploy](#deploy)
+- [Supported models & compression](#supported-models--compression)
+- [Repository layout](#repository-layout)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Background
+
+Model compression tools (ONNX Runtime, TensorRT, Sony MCT, …) are libraries you call from code —
+they compress a graph but leave orchestration, benchmarking, accuracy gating, model storage,
+approval, and deployment to you. Kompress wraps those libraries in a **pipeline** and turns them
+into interchangeable backends: adapters bring any framework in, compressors are pluggable
+techniques, a hardware map picks which to run, and the compressed model flows through
+benchmark → gate → report → registry → deploy. The result is vendor- and hardware-neutral, and
+every layer — including the compression libraries and MLflow — is open source.
+
+## Install
+
+**Local (Linux; developed on Arch):**
+
+```bash
+./run.sh              # sets up a venv + web deps, starts MLflow + API + worker + dashboard
+./run.sh --with-dl    # also install PyTorch (CPU) + onnxscript for the DL path
 ```
 
-## Supported frameworks & compression
+Then open the **Dashboard** at http://localhost:5173 (API docs at http://localhost:8000/docs).
 
-| Framework | Export | Compression that runs |
+**Manual:**
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # + requirements-deploy.txt for the cloud backends
+( cd web && npm install )
+```
+
+Prerequisites on Arch: `sudo pacman -S python nodejs npm`.
+
+## Usage
+
+A **job** is described by a manifest — `{ model, test_data, target_hardware, gate }` — see
+[`plugin/job.schema.json`](plugin/job.schema.json) and [`plugin/job.example.yaml`](plugin/job.example.yaml).
+Only a **test set** is needed (no training data); features are auto-inferred from the test CSV.
+
+### Front Door A — plugin
+
+Run compression as a step in any orchestrator:
+
+```bash
+python plugin/run_job.py --job plugin/job.example.yaml --artifacts-dir artifacts
+# or containerized:
+docker run --rm -v "$PWD:/work" -w /work kompress:engine \
+    python plugin/run_job.py --job job.yaml --artifacts-dir artifacts
+```
+
+Output: `artifacts/<model>/compression_report.json` (the Plan) + the compressed variants; the exit
+code fails the step if the accuracy gate fails. Set `MLFLOW_TRACKING_URI` to log to your own MLflow,
+or leave it unset and the report file is the source of truth. A reusable GitHub Action is at
+[`.github/actions/compress-model`](.github/actions/compress-model); more in
+[`integrations/README.md`](integrations/README.md).
+
+### Front Door B — self-serve
+
+Start the stack (`./run.sh`) and use the dashboard, or drive the API directly:
+
+```bash
+# submit (pointer refs; or POST /uploads a file first to get a pointer)
+curl -X POST localhost:8000/runs -H 'content-type: application/json' -d '{
+  "model": {"name":"churn","ref":"s3://bucket/model.pkl","framework":"xgboost",
+            "task":"binary_classification","target":"churn"},
+  "test_data": {"ref":"s3://bucket/test.csv"},
+  "target_hardware": "cpu-generic"
+}'
+# -> {"run_id":"…","status":"pending_gate"}
+```
+
+Then watch it go `pending_gate → pending_approval` on the dashboard, review the Plan, and
+**Approve** to promote it to Production (or **Export** it for your device).
+
+## API
+
+| Method & path | Purpose |
+|---|---|
+| `POST /runs` | submit a job (pointer refs only) |
+| `POST /uploads` | upload a file → returns an `s3://` pointer for `POST /runs` |
+| `GET /runs?status=` | review queue (filter by lifecycle status) |
+| `GET /runs/{id}` · `/report` · `/artifact` | run status · the Plan · download the winner |
+| `GET /runs/{id}/export?format=` | export for a device (`onnx · tensorrt · tflite · coreml`) |
+| `POST /runs/{id}/approve` · `/reject` · `/rollback` | consent → promote · reject · roll back |
+| `GET /models` · `/models/{name}/versions` | registered models & versions |
+| `GET /hardware-targets` · `/export-formats` | dropdown data for the UI |
+
+## Deploy
+
+**Full open-source stack** (PostgreSQL · MinIO · Valkey · MLflow · API · workers · dashboard —
+no managed cloud service required):
+
+```bash
+docker compose -f deploy/docker-compose.oss.yml up --build
+# Dashboard :8080 · API :8000 · MLflow :5000 · MinIO console :9001
+```
+
+Pluggable connectors (all env-driven): `KOMPRESS_QUEUE=redis://…` (Valkey/Redis) or the default
+filesystem queue; `S3_ENDPOINT_URL` + `AWS_*` for MinIO/S3; `MLFLOW_TRACKING_URI` for a
+Postgres-backed MLflow. Scales to Kubernetes (one Job per compression + KEDA). See
+[`STATUS.md`](STATUS.md) for the cloud topology, the managed→OSS mapping, and hardening notes.
+
+## Supported models & compression
+
+| Framework | Export | Compression |
 |---|---|---|
-| XGBoost / LightGBM / scikit-learn | ONNX (onnxmltools / skl2onnx) | ONNX INT8 dynamic ⭐, INT8 static, TRT INT8 (GPU) |
-| PyTorch | ONNX (torch.onnx) | ONNX INT8 dynamic ⭐, INT8 static, TRT INT8 (GPU) |
+| XGBoost / LightGBM / scikit-learn | ONNX (onnxmltools / skl2onnx) | ONNX INT8 dynamic ⭐ / static, TensorRT INT8 (GPU) |
+| PyTorch | ONNX (torch.onnx) | ONNX INT8 dynamic ⭐ / static, TensorRT INT8 (GPU) |
 
-> **No GPU needed.** ONNX-Runtime INT8 quantization gives real compression on
-> CPU. TensorRT is attempted only if an NVIDIA GPU is present and falls back to
-> FP32 ONNX otherwise.
+`target_hardware` drives both which compressors run and the export format:
+`cpu-generic → onnx` · `nvidia-gpu → tensorrt` · `arm-npu → tflite` · `sony-imx500 → onnx/MCT`.
+No GPU required — ONNX-Runtime INT8 gives real compression on CPU; TensorRT is attempted only
+with an NVIDIA GPU and falls back to ONNX otherwise.
 
-## Architecture (the generic core)
-
-- **`pipeline.yaml`** — single source of truth: framework, task, feature schema,
-  compressors to run, gate thresholds, deploy target. No more duplicated feature lists.
-- **`common/`** — config loader, feature schema → dynamic Pydantic request model,
-  task-aware metrics, uniform ONNX output parsing.
-- **`adapters/`** — one class per framework: `load`, `predict`, `to_onnx`.
-  Register a new framework by adding an adapter to `adapters/__init__.py`.
-- **`compressors/`** — one class per method producing a `Variant`. Add a technique
-  (e.g. pruning, distillation) by dropping a module in and listing it in the registry.
-- **`artifacts/variants.json`** — the manifest every downstream stage consumes.
-
-## Run locally (Windows)
-
-```bat
-run_pipeline.bat
-```
-
-First run auto-installs `requirements.txt`, starts MLflow (`python -m mlflow server`),
-generates data, trains, compresses, benchmarks, gates, registers, deploys, and
-launches the API.
-
-- API + Swagger: http://localhost:8000/docs
-- MLflow UI: http://localhost:5000
-
-Manual install (if you prefer): `python -m pip install -r requirements.txt`
-(uncomment `lightgbm` / `torch` in the file for those frameworks).
-
-## Point it at one or many models
-
-`pipeline.yaml` has a `models:` list. Add as many as you want — they can be
-totally unrelated (different frameworks, tasks, features, datasets). Every stage
-loops over them and compresses each independently into `artifacts/<name>/`, indexed
-by `artifacts/models.json`.
-
-```yaml
-models:
-  - name: churn
-    framework: xgboost
-    task: binary_classification
-    artifact: artifacts/churn/model.pkl
-    trainable: true                 # built-in trainer produces this
-    target: churn
-    data: { train: data/train.csv, test: data/test.csv }
-    features: [ ... ]
-
-  - name: house_price               # a second, unrelated model
-    framework: sklearn
-    task: regression
-    artifact: artifacts/house_price/model.pkl
-    trainable: false                # you drop in the trained artifact
-    target: price
-    data: { test: data/house_test.csv }
-    features: [ ... ]
-```
-
-- **Trainable classic-ML models** (`trainable: true`, framework `xgboost`): the
-  built-in trainer produces the artifact.
-- **Everything else** (PyTorch, sklearn, LightGBM you trained yourself): set
-  `trainable: false` and drop your trained artifact at `model.artifact`.
-
-### Multi-model serving
-
-One API serves every model, each with a schema built from its own feature list:
+## Repository layout
 
 ```
-POST /predict/{model}/{variant}     e.g. /predict/house_price/onnx_fp32
-POST /compare/{model}               runs all of that model's variants
-GET  /models                        lists models, tasks, variants, features
+adapters/      framework → ONNX          compressors/   compression techniques
+common/        config, schema, hardware  plugin/        job manifest + run_job.py (Front Door A)
+report/        the "Plan" generator      registry/      MLflow state + promote/rollback
+export/        device export targets      worker/        queue + executor + worker loop
+api/           FastAPI (Front Door B)    web/           React dashboard
+deploy/        OSS docker-compose stack  tests/         platform smoke test (CI)
 ```
 
-> **Chained models (A→B):** the pipeline compresses each model independently. If
-> you need it to *run* model A and feed its outputs into model B for benchmarking,
-> that's an inference-topology add-on — not built yet.
+## Contributing
 
-## Deploy to Hugging Face Spaces (free, no EC2)
+- **Add a framework:** implement a `ModelAdapter` in `adapters/` and register it.
+- **Add a compression technique:** implement a `Compressor` in `compressors/` and list it.
+- **Add an export target / queue backend:** drop a module into `export/` or `worker/queue.py`.
 
-1. Create a token at https://huggingface.co/settings/tokens (write scope).
-2. Set `deploy.space_id: "your-username/your-space"` in `pipeline.yaml`.
-3. Export the token and run the deploy step:
+Platform CI (`.github/workflows/ci.yml`) runs a smoke test of the engine + the web build on every push.
 
-   ```bat
-   set HF_TOKEN=hf_xxx
-   python deploy\hf_spaces_deploy.py
-   ```
+## License
 
-It creates a Docker Space, uploads the serving code + compressed artifacts, and HF
-builds a public API. The step is skipped automatically if `HF_TOKEN`/`space_id`
-are unset, so `run_pipeline.bat` never fails on it.
-
-## Adding a new compression technique
-
-Implement `compressors.base.Compressor.compress(...)` returning a `Variant`,
-register it in `compressors/__init__.py`, and add its name to `compression.methods`
-in `pipeline.yaml`. Benchmark/gate/serve pick it up with no other changes.
+Apache-2.0. The compression engine and dependencies are open source; TensorRT (NVIDIA, optional)
+is the only proprietary component and the pipeline falls back to ONNX INT8 without it.

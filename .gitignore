@@ -17,6 +17,7 @@ mlruns/
 mlartifacts/
 *.db
 mlflow_store/mlflow.db
+.run-logs/
 
 # ── Node / web (also covered by web/.gitignore) ─────────────────────────────
 node_modules/

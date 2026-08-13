@@ -16,6 +16,7 @@ skl2onnx>=1.16.0           # scikit-learn -> ONNX
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.1
+python-multipart>=0.0.9   # required for POST /uploads (multipart file uploads)
 
 # ── Deploy (Hugging Face Spaces) ─────────────────────────────────────────────
 huggingface_hub>=0.23.0

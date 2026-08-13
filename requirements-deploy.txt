@@ -1,0 +1,5 @@
+# Cloud / self-hosted deployment backends (installed in the API + worker images).
+# Not needed for local `./run.sh` (FileQueue + sqlite); required for the OSS stack.
+boto3>=1.34               # S3 / MinIO object storage — uploads + pointer resolution (common/objstore.py)
+redis>=5.0                # Valkey / Redis queue backend (worker/queue.py RedisQueue)
+psycopg2-binary>=2.9      # PostgreSQL driver for the MLflow backend store

@@ -82,19 +82,60 @@ class FileQueue(QueueBackend):
         return bool(glob.glob(os.path.join(self.pending, "*.json")))
 
 
+class RedisQueue(QueueBackend):
+    """Reliable Redis/Valkey-backed queue for multi-node deployments.
+
+    Uses a reliable-queue pattern: LMOVE atomically claims from the pending list into
+    a processing list, so a crashed worker's job is not lost (it can be requeued from
+    'processing'). Works against Redis or its OSS fork Valkey — same protocol.
+    """
+
+    def __init__(self, url: str, namespace: str = "kompress"):
+        import redis  # lazy: only needed when this backend is selected
+        self.r = redis.Redis.from_url(url, decode_responses=True)
+        self.pending = f"{namespace}:pending"
+        self.processing = f"{namespace}:processing"
+        self.failed = f"{namespace}:failed"
+
+    def __repr__(self):
+        return f"RedisQueue({self.pending})"
+
+    def enqueue(self, payload: dict) -> str:
+        raw = json.dumps(payload)
+        self.r.lpush(self.pending, raw)
+        return payload.get("run_id") or uuid.uuid4().hex
+
+    def claim(self):
+        # atomic pending -> processing; handle is the raw string (needed to ack).
+        raw = self.r.lmove(self.pending, self.processing, "RIGHT", "LEFT")
+        if raw is None:
+            return None
+        return json.loads(raw), raw
+
+    def complete(self, handle):
+        self.r.lrem(self.processing, 1, handle)
+
+    def fail(self, handle):
+        self.r.lrem(self.processing, 1, handle)
+        self.r.lpush(self.failed, handle)
+
+    def has_pending(self) -> bool:
+        return self.r.llen(self.pending) > 0
+
+
 def default_queue_dir() -> str:
     return os.getenv("KOMPRESS_QUEUE_DIR", os.path.join(REPO_ROOT, "queue"))
 
 
 def get_queue() -> QueueBackend:
-    """Resolve the configured queue backend. KOMPRESS_QUEUE selects it:
-    'file' (default) -> FileQueue(KOMPRESS_QUEUE_DIR); 'redis://...' -> not yet
-    implemented (add RedisQueue here for production)."""
+    """Resolve the configured queue backend from KOMPRESS_QUEUE:
+      'file' (default)  -> FileQueue(KOMPRESS_QUEUE_DIR)   — no external service
+      'redis://host:port/0' | 'valkey://...' -> RedisQueue — multi-node production
+    """
     backend = os.getenv("KOMPRESS_QUEUE", "file")
     if backend in ("file", "filesystem") or backend.startswith("file:"):
         return FileQueue(default_queue_dir())
-    if backend.startswith("redis"):
-        raise NotImplementedError(
-            "Redis/RQ backend not implemented — the filesystem queue is the default. "
-            "Add a RedisQueue(QueueBackend) here to enable it.")
+    if backend.startswith("redis") or backend.startswith("valkey"):
+        url = backend.replace("valkey://", "redis://", 1)
+        return RedisQueue(url)
     raise ValueError(f"Unknown KOMPRESS_QUEUE backend '{backend}'.")

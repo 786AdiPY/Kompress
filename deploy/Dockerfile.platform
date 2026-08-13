@@ -1,0 +1,20 @@
+# Kompress API + worker image. Same image runs both (command differs in compose):
+#   API    -> uvicorn api.app:app
+#   worker -> python -m worker.worker
+# Python 3.12 (the MLflow client is happy here; avoids the 3.14 issue).
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-deploy.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-deploy.txt
+
+COPY . .
+
+ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
+
+# Default command = API; the worker service overrides it in docker-compose.
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
