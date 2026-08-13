@@ -369,9 +369,9 @@ function SectionLabel({ n, t }: { n: string; t: string }) {
 const STAGES = [
   {
     k: 'Ingest',
-    t: 'Point at a model.',
-    d: 'Hand over a trained artifact and the test set you already have. No retraining, no training data, no code changes to the model itself.',
-    m: 'pkl · pt',
+    t: 'Bring the model you already have.',
+    d: 'Upload a trained artifact and its test set, or point at ones already sitting in object storage. No retraining, no training data, and no code changes to the model itself.',
+    m: 'upload · s3:// pointer',
   },
   {
     k: 'Export',
@@ -713,6 +713,14 @@ const CAPS = [
   {
     k: 'Provenance, not vibes',
     d: 'Every run stores the base model hash, the variant chosen, all deltas and the gate report in MLflow — so six months later you can answer exactly what shipped and why it was allowed to.',
+  },
+  {
+    k: 'Runs on your own infrastructure',
+    d: 'One command brings up the whole platform — API, workers, MLflow backed by Postgres, S3-compatible object storage and a queue — as containers you host yourself. Models, metrics and artifacts never leave your network.',
+  },
+  {
+    k: 'Workers scale out',
+    d: 'Compression runs through a queue instead of the request, so a long job never blocks the API. The filesystem queue needs no extra services; Redis or Valkey takes over for multi-node, claiming each job atomically so a crashed worker is requeued rather than lost.',
   },
   {
     k: 'Rollback as a first-class action',
