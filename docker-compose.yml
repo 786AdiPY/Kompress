@@ -59,7 +59,7 @@ services:
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       DATA_DIR: data
-    command: ["python", "train/train.py"]
+    command: ["python", "-m", "kompress.tools.train"]
 
   # ── Compress: any model → ONNX FP32 → INT8 variants (manifest) ─────────────
   compress:
@@ -68,7 +68,7 @@ services:
     depends_on:
       train:
         condition: service_completed_successfully
-    command: ["python", "compress/compress.py"]
+    command: ["python", "-m", "kompress.engine.pipeline.compress"]
 
   # ── Benchmark native + all compressed variants ─────────────────────────────
   benchmark:
@@ -79,7 +79,7 @@ services:
         condition: service_completed_successfully
     environment:
       RUNS: "200"
-    command: ["python", "benchmark/benchmark.py"]
+    command: ["python", "-m", "kompress.engine.pipeline.benchmark"]
 
   # ── Quality gate ───────────────────────────────────────────────────────────
   gate:
@@ -88,7 +88,7 @@ services:
     depends_on:
       benchmark:
         condition: service_completed_successfully
-    command: ["python", "gate/gate.py"]
+    command: ["python", "-m", "kompress.engine.pipeline.gate"]
 
   # ── Register best variant to MLflow ────────────────────────────────────────
   registry:
@@ -101,7 +101,7 @@ services:
         condition: service_healthy
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
-    command: ["python", "registry/register.py"]
+    command: ["python", "-m", "kompress.engine.registry.register"]
 
   # ── Deploy to Hugging Face Spaces (self-skips without HF_TOKEN/space_id) ────
   deploy:
@@ -113,7 +113,7 @@ services:
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       SPACE_ID: ${SPACE_ID:-}
-    command: ["python", "deploy/hf_spaces_deploy.py"]
+    command: ["python", "-m", "kompress.tools.hf_deploy"]
 
   # ── Serve (FastAPI, manifest-driven) ───────────────────────────────────────
   serve:
@@ -124,7 +124,7 @@ services:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
-    command: ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "kompress.services.cloud.serve.app:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -140,4 +140,4 @@ services:
         condition: service_healthy
     environment:
       INCOMING_CSV: data/test.csv
-    command: ["python", "monitor/drift.py"]
+    command: ["python", "-m", "kompress.tools.monitor"]

@@ -115,15 +115,26 @@ services:
       mlflow: {condition: service_started}
 
   # ── Kompress workers: pull jobs, compress in isolation, store in MLflow ─────
+  # Sized for the direct-upload tier (models up to KOMPRESS_MAX_UPLOAD_GB, default
+  # 10GB) per common/limits.py's rule of thumb: ~2-3x model size in memory (loading
+  # + exporting) and ~3-4x model size in scratch DISK (original + ONNX FP32 export +
+  # 2-3 compressed variants + calibration data) -> ~30GB RAM / ~40GB disk headroom
+  # per concurrent job at the 10GB ceiling. mem_limit/cpus are honored by plain
+  # `docker compose up` (no swarm needed); the `shared` volume just needs that much
+  # free HOST disk since named volumes carry no built-in size quota.
   worker:
     build: {context: .., dockerfile: deploy/Dockerfile.platform}
     environment: *platform-env
     command: python -m worker.worker --poll 2
     volumes: [shared:/shared]
+    mem_limit: 32g
+    mem_reservation: 8g
+    cpus: "4"
     depends_on:
       api: {condition: service_started}
     deploy:
       replicas: 2        # scale out: docker compose ... up --scale worker=N
+                          # each replica processes one job at a time -> N x the sizing above
 
   # ── Dashboard (Front Door B UI): nginx serving the SPA + proxying /api ──────
   web:

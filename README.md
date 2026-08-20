@@ -181,19 +181,33 @@ with an NVIDIA GPU and falls back to ONNX otherwise.
 ## Repository layout
 
 ```
-adapters/      framework → ONNX          compressors/   compression techniques
-common/        config, schema, hardware  plugin/        job manifest + run_job.py (Front Door A)
-report/        the "Plan" generator      registry/      MLflow state + promote/rollback
-export/        device export targets      worker/        queue + executor + worker loop
-api/           FastAPI (Front Door B)    web/           React dashboard
-deploy/        OSS docker-compose stack  tests/         platform smoke test (CI)
+src/kompress/
+├── engine/              Core Compression Engine
+│   ├── adapters/        framework → ONNX FP32
+│   ├── compressors/     compression techniques (ONNX INT8, TensorRT)
+│   ├── pipeline/        compress → benchmark → gate → report (the Plan)
+│   ├── export/          device export targets (onnx, tensorrt, tflite, coreml)
+│   ├── registry/        MLflow tracking state + promote/rollback
+│   └── common/          config, schemas, hardware targets, metrics
+├── services/            Platform Entrypoints & Front Doors
+│   ├── plugin/          Front Door A — Orchestration Plugin (run_job.py)
+│   └── cloud/           Front Door B — Self-Serve Platform Services
+│       ├── api/         FastAPI REST backend
+│       ├── worker/      Task queue & background worker
+│       ├── serve/       Model inference server
+│       └── web/         React dashboard UI
+└── tools/               Auxiliary scripts (baseline trainer, drift monitor, deployer)
+
+data/                    Sample datasets & generators
+deploy/                  OSS docker-compose stack & deployment configs
+tests/                   Platform CI smoke tests
 ```
 
 ## Contributing
 
-- **Add a framework:** implement a `ModelAdapter` in `adapters/` and register it.
-- **Add a compression technique:** implement a `Compressor` in `compressors/` and list it.
-- **Add an export target / queue backend:** drop a module into `export/` or `worker/queue.py`.
+- **Add a framework:** implement a `ModelAdapter` in `src/kompress/engine/adapters/` and register it.
+- **Add a compression technique:** implement a `Compressor` in `src/kompress/engine/compressors/` and list it.
+- **Add an export target / queue backend:** drop a module into `src/kompress/engine/export/` or `src/kompress/services/cloud/worker/queue.py`.
 
 Platform CI (`.github/workflows/ci.yml`) runs a smoke test of the engine + the web build on every push.
 

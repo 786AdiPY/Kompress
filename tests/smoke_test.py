@@ -19,26 +19,26 @@ import sys
 import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, REPO)
+SRC_DIR = os.path.join(REPO, "src")
+sys.path.insert(0, SRC_DIR)
 
 
 def check_imports():
-    """Every platform package must import cleanly. Importing api.app also pulls in
-    common/, adapters/, compressors/, export/, registry/ and FastAPI in one shot."""
-    import adapters          # noqa: F401
-    import common            # noqa: F401
-    import compressors       # noqa: F401
-    from common.hardware import compressors_for   # noqa: F401
-    from export import list_exporters             # noqa: F401
-    from registry import mlflow_state, promote    # noqa: F401
-    import api.app           # noqa: F401
+    """Every platform package must import cleanly."""
+    from kompress.engine import adapters          # noqa: F401
+    from kompress.engine import common            # noqa: F401
+    from kompress.engine import compressors       # noqa: F401
+    from kompress.engine.common.hardware import compressors_for   # noqa: F401
+    from kompress.engine.export import list_exporters             # noqa: F401
+    from kompress.engine.registry import mlflow_state, promote    # noqa: F401
+    import kompress.services.cloud.api.app           # noqa: F401
     print("[ok] package imports")
 
 
 def check_schemas():
     import jsonschema
     from jsonschema import Draft7Validator
-    for rel in ("plugin/job.schema.json", "report/report.schema.json"):
+    for rel in ("src/kompress/services/plugin/job.schema.json", "src/kompress/engine/pipeline/report.schema.json"):
         schema = json.load(open(os.path.join(REPO, rel)))
         Draft7Validator.check_schema(schema)
     print("[ok] JSON schemas valid")
@@ -77,7 +77,7 @@ def check_engine(tmp: str):
 
     art_dir = os.path.join(tmp, "artifacts")
     subprocess.run(
-        [sys.executable, os.path.join(REPO, "plugin", "run_job.py"),
+        [sys.executable, os.path.join(SRC_DIR, "kompress", "services", "plugin", "run_job.py"),
          "--job", job_file, "--artifacts-dir", art_dir],
         cwd=REPO, check=False,
     )
@@ -86,7 +86,7 @@ def check_engine(tmp: str):
     assert os.path.exists(report_path), f"engine produced no report at {report_path}"
 
     report = json.load(open(report_path))
-    schema = json.load(open(os.path.join(REPO, "report", "report.schema.json")))
+    schema = json.load(open(os.path.join(SRC_DIR, "kompress", "engine", "pipeline", "report.schema.json")))
     import jsonschema
     jsonschema.validate(report, schema)
     assert isinstance(report["gate_passed"], bool)

@@ -104,15 +104,38 @@ You compress a model you bring — the bundled churn/house samples are just conv
 A job needs three things: the **model**, its **test set**, and the **target hardware**
 (framework/task/target come along too; features are auto-inferred from the test CSV).
 
-### Why "link/pointer", not a file picker — and how to still just upload a `.pkl`
+### Size tiers: direct upload (<10GB, primary) vs. pointer-only (≥10GB, deferred)
 
-The API is **pointer-based** (`s3://…`, `mlflow://…`), never a raw file upload, for three reasons:
-an uploaded pickle is **arbitrary code execution** on unpickle; test datasets can be **huge**; and
-it keeps the API stateless. The `.pkl`/CSV still get uploaded — just **via object storage**, so the
-raw bytes never reach the compression process, only the resulting pointer does. Two ways to test:
+Two intake paths, chosen automatically by size — not a UI toggle:
+
+| Tier | Size | Path | Status |
+|---|---|---|---|
+| **Direct upload** | **< 10GB** (`KOMPRESS_MAX_UPLOAD_GB`, default 10) | `POST /uploads` streams the file into object storage (MinIO/S3), returns an `s3://` pointer, submit that to `POST /runs` | ✅ primary path, implemented |
+| **Pointer-only** | **≥ 10GB** | caller hosts the file themselves and submits its `s3://…` ref directly to `POST /runs` — `/uploads` refuses it | supported, not the tuned/tested path right now (deferred) |
+
+`POST /uploads` enforces the ceiling **before** doing any real work: a `Content-Length` over the
+limit is rejected immediately (`413`, no upload attempted); a chunked/lying upload is aborted
+**mid-stream** the moment it crosses the limit (via a size-counting wrapper around the read —
+verified: an oversized stream is caught after a few chunks, not after buffering the whole file).
+Get a `413` → the message tells you to submit a pointer instead.
+
+Why pointer, not always-upload: an uploaded pickle is **arbitrary code execution** on unpickle;
+some datasets are legitimately huge; and pointers keep the API stateless. Below 10GB we accept the
+UX cost of "upload a file" by re-hosting it ourselves (object storage) so the engine still only
+ever consumes pointers internally — the raw bytes never reach the compression process.
+
+**Resource sizing for the upload tier** (`deploy/docker-compose.oss.yml`): workers are sized
+`mem_limit: 32g` / `cpus: 4` per the rule of thumb in `common/limits.py` — ~2-3× model size in
+memory (load + export), ~3-4× in scratch disk (original + ONNX export + variants + calibration
+data) → ~30GB RAM / ~40GB disk headroom per concurrent job at the 10GB ceiling. `deploy: replicas: 2`
+means 2 concurrent jobs at that sizing; scale workers and this budget multiplies per replica.
+nginx (`deploy/nginx.conf`) is set to `client_max_body_size 11g` (headroom above the 10GB app-level
+cap, so the API's own 413 fires — not nginx's generic one) with 1800s timeouts for the transfer.
+
+### How to test it
 
 **A. Local (`./run.sh`, `API_ALLOW_LOCAL_PATHS=1`)** — drop your files in the repo and reference them
-by path (no object store needed):
+by path (no object store needed, and no size ceiling applied — that check only lives on `/uploads`):
 
 ```bash
 # put your model + test csv anywhere under the repo, then submit:
@@ -123,11 +146,11 @@ curl -X POST localhost:8000/runs -H 'content-type: application/json' -d '{
   "target_hardware":"cpu-generic"}'
 ```
 
-**B. OSS stack / hosted (`API_ALLOW_LOCAL_PATHS=0`)** — upload to object storage first, then submit
-the returned pointer (this is exactly what a "upload a file" button in the UI does under the hood):
+**B. OSS stack / hosted (`API_ALLOW_LOCAL_PATHS=0`)** — upload to object storage first (this is
+exactly what an "upload a file" button in the UI does under the hood), then submit the pointer:
 
 ```bash
-# 1. upload the model -> get an s3:// pointer
+# 1. upload the model -> get an s3:// pointer (413 if it's >= the 10GB ceiling)
 curl -F 'file=@my_model.pkl' -F 'kind=model' localhost:8000/uploads
 #    -> {"ref":"s3://kompress/uploads/model/…_my_model.pkl", …}
 # 2. upload the test set the same way (kind=test_data), then
@@ -299,7 +322,7 @@ Kompress is deployment-ready with the OSS stack via pluggable, env-driven connec
 | **FileQueue** (default) | `worker/queue.py`, `KOMPRESS_QUEUE=file` | zero-dependency filesystem job queue for single-node / dev |
 | **RedisQueue** | `worker/queue.py`, `KOMPRESS_QUEUE=redis://…` (or `valkey://`) | multi-node job queue on **Valkey/Redis**; atomic claim via `LMOVE` (reliable-queue: a crashed worker's job isn't lost) |
 | **Object store** | `common/objstore.py`, `S3_ENDPOINT_URL` + `AWS_*` | **MinIO/S3** — resolves `s3://` pointers (download) and backs uploads. Endpoint-aware: set `S3_ENDPOINT_URL=http://minio:9000` for MinIO, unset for real AWS S3 |
-| **Upload endpoint** | `POST /uploads` (`api/app.py`) | streams a user's uploaded `.pkl`/CSV into object storage and returns an `s3://` pointer — so the UI offers "upload a file" while the engine still only ever consumes pointers |
+| **Upload endpoint** | `POST /uploads` (`api/app.py`) | streams a user's uploaded `.pkl`/CSV into object storage and returns an `s3://` pointer — so the UI offers "upload a file" while the engine still only ever consumes pointers. Enforces the **<10GB direct-upload ceiling** (`common/limits.py`, `KOMPRESS_MAX_UPLOAD_GB`) — `413` fast-path on `Content-Length`, aborts mid-stream otherwise; ≥10GB models use the pointer-only path directly against `POST /runs` instead |
 | **MLflow (Postgres + MinIO)** | `MLFLOW_TRACKING_URI`, `deploy/Dockerfile.mlflow` | tracking server + model registry; **PostgreSQL** metadata (concurrent-writer safe) + **MinIO** artifact store (replaces dev sqlite) |
 | **Dashboard (nginx)** | `web/Dockerfile`, `deploy/nginx.conf` | serves the built SPA and reverse-proxies `/api` → the API service |
 | **OSS compose** | `deploy/docker-compose.oss.yml` | one command wires Postgres + MinIO + Valkey + MLflow + API + N workers + dashboard |
