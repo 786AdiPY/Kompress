@@ -106,3 +106,14 @@ export interface ModelVersion {
   run_id: string | null;
   status?: string | null;
 }
+
+export interface ExportFormat {
+  format: string;
+  label: string;
+  devices: string[];
+  extension: string;
+  available: boolean;
+  unavailable_reason: string;
+  runtime_hint: string;
+  recommended: boolean;
+}

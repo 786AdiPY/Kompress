@@ -5,6 +5,7 @@
 // so the default relative base works without CORS. Override with VITE_API_BASE.
 import type {
   CompressionReport,
+  ExportFormat,
   JobIn,
   ModelVersion,
   RegisteredModel,
@@ -108,6 +109,20 @@ export function getReport(id: string): Promise<CompressionReport> {
 /** URL for the winning-variant download. Use as an <a href>, not fetch-json. */
 export function artifactUrl(id: string): string {
   return `${BASE}/runs/${encodeURIComponent(id)}/artifact`;
+}
+
+/** Device export targets for the 'Download for device' UI, flagged with which
+ * one is recommended for the run's target hardware. */
+export async function getExportFormats(hardware?: string | null): Promise<ExportFormat[]> {
+  const qs = hardware ? `?hardware=${encodeURIComponent(hardware)}` : '';
+  const data = await request<{ formats: ExportFormat[] }>(`/export-formats${qs}`);
+  return data.formats;
+}
+
+/** URL for a device-specific export download. Use as an <a href>, not fetch-json —
+ * the server converts ONNX -> the target format and streams the file back. */
+export function exportUrl(id: string, format: string): string {
+  return `${BASE}/runs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
 }
 
 export function approveRun(id: string): Promise<ApproveResponse> {

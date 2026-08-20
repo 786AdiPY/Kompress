@@ -140,3 +140,46 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* download-for-device cards */
+.rd-export-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+.rd-export-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-2);
+}
+.rd-export-card--disabled {
+  opacity: 0.6;
+}
+.rd-export-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rd-export-card__label {
+  font-weight: 700;
+}
+.rd-export-card__devices {
+  font-size: var(--font-size-sm);
+}
+.rd-export-card__reason,
+.rd-export-card__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+.rd-export-card__hint {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}

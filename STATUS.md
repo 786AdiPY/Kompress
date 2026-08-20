@@ -59,13 +59,12 @@ result in MLflow** (delta metrics + registered ONNX + status tag). Toggle with
 - ✅ **Front Door B API** — submit (pointer-only, 400/501/202 policy), review queue, report, artifact download, approve → promote, reject, rollback, `/models`, `/export`.
 - ✅ **Approval → MLflow** — approve registers the winning ONNX to the Model Registry and promotes to Production; rollback = promote an older run.
 - ✅ **Worker/queue** — verified end-to-end: submit → queued → worker compresses → **registered in MLflow** → `pending_approval`.
-- ✅ **Export layer** — ONNX export returns the file; TensorRT returns a 501 with `trtexec` guidance; `/export-formats` lists availability per hardware.
+- ✅ **Export layer** — ONNX export returns the file; TensorRT returns a 501 with `trtexec` guidance; `/export-formats` lists availability per hardware. The **"Download for device"** section on Run Detail renders one card per target (recommended format flagged from `target_hardware`), downloads the available ones, and shows unavailable converters disabled with the server's enable instructions.
 - ✅ **Platform CI** — `tests/smoke_test.py` (imports + schemas + engine on a fixture) passes; frontend `npm run build` passes.
 - ✅ **Dashboard** — Landing + 4 pages build clean; API contract review passed (`contract_matches: true`).
 
 ## Currently working on / pending
 
-- ⏳ **Export "Download for device" UI buttons** — backend (`/export`, `/export-formats`) is done and verified; the Run Detail buttons that call it are **not wired in the UI yet**.
 - ⏳ **DL / PyTorch path** — newer `torch` (2.13) changed `torch.onnx.export` (dynamo default); `adapters/pytorch_adapter.py` needs a `dynamo=False` fix for the DL sample to compress. Not in CI (smoke test uses sklearn) and `torch` is opt-in, so it doesn't affect the build.
 - ✅/⏳ **Design** — a product-grade UI refresh (Lexend, design tokens, product tour) and a marketing landing page have landed (commits `ff63661`, `9eda4ba`). Further design tweaks map onto `web/src/styles/tokens.css` + component CSS.
 

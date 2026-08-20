@@ -12,11 +12,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   approveRun,
   artifactUrl,
+  exportUrl,
+  getExportFormats,
   getReport,
   getRun,
   rejectRun,
 } from '../api/client';
-import type { CompressionReport, VariantResult } from '../api/types';
+import type { CompressionReport, ExportFormat, VariantResult } from '../api/types';
 
 import DeltaStat from '../components/DeltaStat';
 import ErrorState from '../components/ErrorState';
@@ -193,6 +195,12 @@ function Plan({
       <section className="card">
         <div className="rd-section-title">Promotion gate</div>
         <GateSection report={report} />
+      </section>
+
+      {/* ── download for device ── */}
+      <section className="card">
+        <div className="rd-section-title">Download for device</div>
+        <ExportSection runId={runId} targetHardware={report.target_hardware} />
       </section>
 
       {/* ── actions ── */}
@@ -376,6 +384,73 @@ function GateSection({ report }: { report: CompressionReport }) {
         </div>
       ) : (
         <div className="muted">No per-variant gate checks reported.</div>
+      )}
+    </div>
+  );
+}
+
+// ── download for device ──────────────────────────────────────────────────────
+// Converts the run's compressed ONNX into a device-specific deployable format
+// (ONNX / TensorRT / TFLite / CoreML) and offers each as a download. Formats
+// whose converter isn't installed on this host (e.g. TensorRT without a GPU)
+// show as disabled with the server's actionable reason instead of a dead link.
+function ExportSection({
+  runId,
+  targetHardware,
+}: {
+  runId: string;
+  targetHardware: string;
+}) {
+  const formatsQuery = useQuery({
+    queryKey: ['export-formats', targetHardware],
+    queryFn: () => getExportFormats(targetHardware),
+  });
+
+  if (formatsQuery.isLoading) {
+    return <Loading label="Loading export formats…" />;
+  }
+  if (formatsQuery.isError) {
+    return <ErrorState error={formatsQuery.error} title="Could not load export formats" />;
+  }
+
+  const formats = formatsQuery.data ?? [];
+
+  return (
+    <div className="rd-export-grid">
+      {formats.map((f) => (
+        <ExportCard key={f.format} runId={runId} format={f} />
+      ))}
+    </div>
+  );
+}
+
+function ExportCard({ runId, format }: { runId: string; format: ExportFormat }) {
+  return (
+    <div className={`rd-export-card${format.available ? '' : ' rd-export-card--disabled'}`}>
+      <div className="rd-export-card__head">
+        <span className="rd-export-card__label">{format.label}</span>
+        {format.recommended && <span className="rd-tag rd-tag--best">recommended</span>}
+      </div>
+      <div className="rd-export-card__devices muted">{format.devices.join(' · ')}</div>
+      {format.available ? (
+        <a
+          className="btn"
+          href={exportUrl(runId, format.format)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Download {format.extension}
+        </a>
+      ) : (
+        <button type="button" className="btn" disabled title={format.unavailable_reason}>
+          Unavailable
+        </button>
+      )}
+      {!format.available && format.unavailable_reason && (
+        <div className="rd-export-card__reason">{format.unavailable_reason}</div>
+      )}
+      {format.available && format.runtime_hint && (
+        <div className="rd-export-card__hint mono">{format.runtime_hint}</div>
       )}
     </div>
   );
