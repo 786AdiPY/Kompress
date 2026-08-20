@@ -4,22 +4,22 @@
   "task": "binary_classification",
   "target_hardware": "cpu-generic",
   "base_model": {
-    "path": "artifacts/churn/model.pkl",
-    "hash": "912b2674b71c687e1434b7cefba847db38c66f145415ff8fb86dc34321ca902f",
-    "size_kb": 870.3,
+    "path": "/Users/karthikeyan-zc034/projects/mlops-pipeline-for-model-compression-/artifacts/churn/model.pkl",
+    "hash": "4c230923387ab5a1766ba829943d467c8c31cce6f10a4a14694bea64142777af",
+    "size_kb": 880.6,
     "mlflow_run_id": null
   },
   "best_variant": {
-    "name": "trt_int8",
+    "name": "onnx_fp32",
     "kind": "onnx",
-    "format": "tensorrt-int8",
-    "size_kb": 623.9,
-    "note": "fallback: no GPU/TensorRT"
+    "format": "onnx-fp32",
+    "size_kb": 638.8,
+    "note": "baseline (no compression)"
   },
   "deltas": {
-    "size_delta_pct": -28.31,
-    "latency_ms_delta": 8.838,
-    "speedup_vs_native": 0.35,
+    "size_delta_pct": -27.46,
+    "latency_ms_delta": 3.127,
+    "speedup_vs_native": 0.3,
     "accuracy_delta": 0.0,
     "auc_delta": 0.0,
     "f1_delta": 0.0,
@@ -29,35 +29,24 @@
     {
       "model": "native_xgboost",
       "kind": "native",
-      "latency_ms": 4.687,
-      "model_size_kb": 870.3,
+      "latency_ms": 1.355,
+      "model_size_kb": 880.6,
       "note": "uncompressed reference",
       "accuracy": 0.97,
-      "f1": 0.837,
-      "auc": 0.9904,
+      "f1": 0.8378,
+      "auc": 0.9902,
       "speedup_vs_native": 1.0
     },
     {
       "model": "onnx_fp32",
       "kind": "onnx",
-      "latency_ms": 14.424,
-      "model_size_kb": 623.9,
+      "latency_ms": 4.482,
+      "model_size_kb": 638.8,
       "note": "baseline (no compression)",
       "accuracy": 0.97,
-      "f1": 0.837,
-      "auc": 0.9904,
-      "speedup_vs_native": 0.32
-    },
-    {
-      "model": "trt_int8",
-      "kind": "onnx",
-      "latency_ms": 13.525,
-      "model_size_kb": 623.9,
-      "note": "fallback: no GPU/TensorRT",
-      "accuracy": 0.97,
-      "f1": 0.837,
-      "auc": 0.9904,
-      "speedup_vs_native": 0.35
+      "f1": 0.8378,
+      "auc": 0.9902,
+      "speedup_vs_native": 0.3
     }
   ],
   "gate_passed": true,
@@ -68,16 +57,8 @@
     "checks": [
       {
         "variant": "onnx_fp32",
-        "latency_ms": 14.424,
-        "speedup": 0.32,
-        "passed": true,
-        "acc_drop": 0.0,
-        "auc_drop": 0.0
-      },
-      {
-        "variant": "trt_int8",
-        "latency_ms": 13.525,
-        "speedup": 0.35,
+        "latency_ms": 4.482,
+        "speedup": 0.3,
         "passed": true,
         "acc_drop": 0.0,
         "auc_drop": 0.0

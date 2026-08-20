@@ -1,0 +1,45 @@
+project: compression-job
+gate: &id001
+  max_acc_drop: 0.01
+  max_auc_drop: 0.01
+models:
+- name: churn
+  framework: xgboost
+  task: binary_classification
+  artifact: /Users/karthikeyan-zc034/projects/mlops-pipeline-for-model-compression-/artifacts/churn/model.pkl
+  num_classes: 2
+  target: churn
+  trainable: false
+  data:
+    test: /Users/karthikeyan-zc034/projects/mlops-pipeline-for-model-compression-/data/test.csv
+  features:
+  - name: tenure_months
+    dtype: float
+  - name: monthly_charges
+    dtype: float
+  - name: total_charges
+    dtype: float
+  - name: num_products
+    dtype: int
+  - name: support_calls
+    dtype: int
+  - name: payment_delay_days
+    dtype: int
+  - name: contract_type
+    dtype: int
+    choices:
+    - 0
+    - 1
+    - 2
+  - name: internet_service
+    dtype: int
+  - name: online_security
+    dtype: int
+  - name: tech_support
+    dtype: int
+  compression:
+    methods:
+    - onnx_fp32
+    - onnx_int8_dynamic
+    - onnx_int8_static
+  gate: *id001
