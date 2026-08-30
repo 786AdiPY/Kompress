@@ -149,26 +149,30 @@ function Plan({
 
   return (
     <div className="stack">
-      {/* ── headline metrics ── */}
-      <div className="grid-stats">
-        <DeltaStat label="Size" value={d.size_delta_pct} unit="%" goodWhen="negative" />
-        <DeltaStat
-          label="Latency"
-          value={d.latency_ms_delta}
-          unit="ms"
-          goodWhen="negative"
-        />
-        <DeltaStat
-          label={quality.label}
-          value={quality.value}
-          goodWhen={quality.goodWhen}
-        />
-        <SpeedupStat value={d.speedup_vs_native} />
-      </div>
-
-      {/* ── provenance ── */}
+      {/* ── 1. Compression Results ── */}
       <section className="card">
-        <div className="rd-section-title">Provenance</div>
+        <div className="rd-section-title">Compression Results</div>
+        <div className="grid-stats" style={{ marginBottom: 'var(--space-4)' }}>
+          <DeltaStat label="Size" value={d.size_delta_pct} unit="%" goodWhen="negative" />
+          <DeltaStat
+            label="Latency"
+            value={d.latency_ms_delta}
+            unit="ms"
+            goodWhen="negative"
+          />
+          <DeltaStat
+            label={quality.label}
+            value={quality.value}
+            goodWhen={quality.goodWhen}
+          />
+          <SpeedupStat value={d.speedup_vs_native} />
+        </div>
+        <VariantsTable report={report} runId={runId} />
+      </section>
+
+      {/* ── 2. Plan Overview ── */}
+      <section className="card">
+        <div className="rd-section-title">Plan Overview</div>
         <div className="rd-provenance">
           <Prov label="Model" value={report.model} />
           <Prov label="Framework" value={report.framework} />
@@ -185,27 +189,27 @@ function Plan({
         </div>
       </section>
 
-      {/* ── variants benchmark table ── */}
+      {/* ── 3. Accuracy Gate ── */}
       <section className="card">
-        <div className="rd-section-title">Variants</div>
-        <VariantsTable report={report} />
-      </section>
-
-      {/* ── promotion gate ── */}
-      <section className="card">
-        <div className="rd-section-title">Promotion gate</div>
+        <div className="rd-section-title">Accuracy Gate</div>
         <GateSection report={report} />
       </section>
 
-      {/* ── download for device ── */}
+      {/* ── 4. Recommended Variant ── */}
       <section className="card">
-        <div className="rd-section-title">Download for device</div>
+        <div className="rd-section-title">Recommended Variant</div>
+        <RecommendedVariantSection report={report} />
+      </section>
+
+      {/* ── 5. Download for Device & Export ── */}
+      <section className="card">
+        <div className="rd-section-title">Download / Export for Target Device</div>
         <ExportSection runId={runId} targetHardware={report.target_hardware} />
       </section>
 
-      {/* ── actions ── */}
+      {/* ── 6. Actions ── */}
       <section className="card">
-        <div className="rd-section-title">Decision</div>
+        <div className="rd-section-title">Actions & Consent</div>
         <Actions
           runId={runId}
           status={status}
@@ -223,6 +227,30 @@ function Plan({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function RecommendedVariantSection({ report }: { report: CompressionReport }) {
+  const best = report.best_variant;
+  const d = report.deltas;
+  const isInt8 = best.name.includes('int8') || best.format.toLowerCase().includes('int8');
+  const variantLabel = isInt8 ? 'INT8 Quantized' : best.name.toUpperCase();
+
+  return (
+    <div className="rd-rec-card">
+      <div className="rd-rec-card__info">
+        <div className="rd-rec-card__title">
+          <span>⭐ Recommended Variant: <strong>{variantLabel}</strong></span>
+          <span className="rd-tag rd-tag--best">Winner</span>
+        </div>
+        <div className="rd-rec-card__meta">
+          Format: <strong>{best.format}</strong> · Target Hardware: <strong>{report.target_hardware}</strong>
+          {d.speedup_vs_native != null && ` · ${fmt(d.speedup_vs_native, 2)}× Speedup`}
+          {d.size_delta_pct != null && ` · ${fmt(d.size_delta_pct, 1)}% Size reduction`}
+        </div>
+        {best.note && <div className="rd-rec-card__meta muted">{best.note}</div>}
+      </div>
     </div>
   );
 }
@@ -267,7 +295,7 @@ const REG_METRICS: { key: MetricKey; label: string; digits: number }[] = [
   { key: 'mae', label: 'MAE', digits: 2 },
 ];
 
-function VariantsTable({ report }: { report: CompressionReport }) {
+function VariantsTable({ report, runId }: { report: CompressionReport; runId: string }) {
   const metricCols = report.task === 'regression' ? REG_METRICS : CLASS_METRICS;
   const bestName = report.best_variant.name;
 
@@ -285,6 +313,7 @@ function VariantsTable({ report }: { report: CompressionReport }) {
                 {m.label}
               </th>
             ))}
+            <th className="rd-num">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -306,6 +335,16 @@ function VariantsTable({ report }: { report: CompressionReport }) {
                     {fmt(v[m.key], m.digits)}
                   </td>
                 ))}
+                <td className="rd-num">
+                  <a
+                    href={artifactUrl(runId)}
+                    download
+                    className="btn btn--sm btn--secondary"
+                    style={{ padding: '2px 8px', fontSize: '12px' }}
+                  >
+                    Download
+                  </a>
+                </td>
               </tr>
             );
           })}
@@ -336,7 +375,7 @@ function GateSection({ report }: { report: CompressionReport }) {
     <div>
       <div className={`rd-gate ${passed ? 'rd-gate--pass' : 'rd-gate--fail'}`}>
         <span className="rd-gate__dot" aria-hidden="true" />
-        {passed ? 'Gate passed' : 'Gate failed'}
+        {passed ? 'Accuracy Gate: PASSED' : 'Accuracy Gate: FAILED'}
       </div>
 
       {checks.length > 0 ? (

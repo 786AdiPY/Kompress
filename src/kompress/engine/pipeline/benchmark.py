@@ -35,12 +35,21 @@ def load_test(manifest):
 
 
 def _timed(fn, X):
-    for _ in range(WARMUP):
+    warmup_n = min(WARMUP, 3)
+    for _ in range(warmup_n):
         fn(X[:1])
     t0 = time.perf_counter()
-    for _ in range(RUNS):
+    runs = 0
+    max_runs = min(RUNS, 50)
+    max_time_sec = 2.0  # max 2 seconds benchmarking per variant
+
+    for _ in range(max_runs):
         out = fn(X)
-    return out, (time.perf_counter() - t0) / RUNS * 1000
+        runs += 1
+        if (time.perf_counter() - t0) >= max_time_sec:
+            break
+    elapsed_ms = (time.perf_counter() - t0) / max(runs, 1) * 1000
+    return out, elapsed_ms
 
 
 def _result(name, variant, latency, metrics):

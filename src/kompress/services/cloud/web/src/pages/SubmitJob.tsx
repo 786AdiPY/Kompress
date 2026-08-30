@@ -220,8 +220,8 @@ export default function SubmitJob() {
           <FileUploadField
             id="model-file"
             label="Model file"
-            accept=".pkl,.pickle"
-            hint="Choose a .pkl model file"
+            accept=".pkl,.pickle,.pt,.pth,.safetensors,.onnx,.bin"
+            hint="Choose a model file (.pkl, .pt, .pth, .safetensors, .onnx)"
             kind="model"
             onUploaded={setModelUpload}
           />

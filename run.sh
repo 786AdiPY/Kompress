@@ -139,9 +139,12 @@ else
   export MLFLOW_TRACKING_URI="$SQLITE_URI"
 fi
 
+# Ensure kompress is installed in editable mode so changes in src/ apply instantly
+pip install -e "$ROOT" --no-deps >/dev/null 2>&1 || true
+
 # ── API (queue mode) + worker + dashboard ────────────────────────────────────
-log "starting API on :8000"
-uvicorn kompress.services.cloud.api.app:app --host 127.0.0.1 --port 8000 --log-level warning >"$LOGS/api.log" 2>&1 &
+log "starting API on :8000 (with auto-reload on src/ changes)"
+uvicorn kompress.services.cloud.api.app:app --host 127.0.0.1 --port 8000 --reload --reload-dir "$ROOT/src" --log-level warning >"$LOGS/api.log" 2>&1 &
 PIDS+=("$!")
 
 log "starting compression worker"

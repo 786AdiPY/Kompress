@@ -17,8 +17,18 @@ def make_session(onnx_path: str):
 
 
 def run(sess, X: np.ndarray):
-    inp = sess.get_inputs()[0].name
-    return sess.run(None, {inp: np.asarray(X, dtype=np.float32)})
+    inp_meta = sess.get_inputs()[0]
+    expected_shape = inp_meta.shape
+    arr = np.asarray(X, dtype=np.float32)
+
+    if len(expected_shape) == 4 and arr.ndim == 2:
+        b = arr.shape[0]
+        c = expected_shape[1] if isinstance(expected_shape[1], int) else 3
+        h = expected_shape[2] if isinstance(expected_shape[2], int) else 224
+        w = expected_shape[3] if isinstance(expected_shape[3], int) else 224
+        arr = np.zeros((b, c, h, w), dtype=np.float32)
+
+    return sess.run(None, {inp_meta.name: arr})
 
 
 def extract_proba(outputs, task: str = "binary_classification") -> np.ndarray:

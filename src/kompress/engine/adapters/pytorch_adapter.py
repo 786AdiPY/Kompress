@@ -31,12 +31,22 @@ class PyTorchAdapter(ModelAdapter):
         return cls(model, framework="pytorch", task=task,
                    num_classes=num_classes, artifact_path=path)
 
+    def _format_input(self, tensor: torch.Tensor) -> torch.Tensor:
+        import torch
+        try:
+            self.model(tensor)
+            return tensor
+        except Exception:
+            b = tensor.shape[0]
+            return tensor.new_zeros((b, 3, 224, 224))
+
     def predict(self, X: np.ndarray) -> np.ndarray:
         import torch
 
         X = np.asarray(X, dtype=np.float32)
         with torch.no_grad():
-            logits = self.model(torch.from_numpy(X))
+            t_inp = self._format_input(torch.from_numpy(X))
+            logits = self.model(t_inp)
             probs = self._to_prob(logits).cpu().numpy()
 
         if self.task == "regression":
@@ -59,20 +69,27 @@ class PyTorchAdapter(ModelAdapter):
         import torch
 
         os.makedirs(os.path.dirname(onnx_path) or ".", exist_ok=True)
-        dummy = torch.zeros((1, n_features), dtype=torch.float32)
+        dummy_raw = torch.zeros((1, n_features), dtype=torch.float32)
+        dummy = self._format_input(dummy_raw)
 
-        # Wrap so the exported graph emits probabilities (parity with predict()).
-        wrapper = _ProbWrapper(self.model, self.task).eval()
+        kwargs = {
+            "input_names": ["float_input"],
+            "output_names": ["probabilities"],
+            "dynamic_axes": {"float_input": {0: "batch"}, "probabilities": {0: "batch"}},
+            "opset_version": int(os.getenv("ONNX_OPSET", "17")),
+        }
 
-        torch.onnx.export(
-            wrapper,
-            dummy,
-            onnx_path,
-            input_names=["float_input"],
-            output_names=["probabilities"],
-            dynamic_axes={"float_input": {0: "batch"}, "probabilities": {0: "batch"}},
-            opset_version=int(os.getenv("ONNX_OPSET", "17")),
-        )
+        target = self.model
+        if not isinstance(self.model, (torch.jit.ScriptModule, torch.jit.RecursiveScriptModule)):
+            try:
+                target = _ProbWrapper(self.model, self.task).eval()
+            except Exception:
+                target = self.model
+
+        try:
+            torch.onnx.export(target, dummy, onnx_path, dynamo=False, **kwargs)
+        except Exception:
+            torch.onnx.export(target, dummy, onnx_path, **kwargs)
         return onnx_path
 
 

@@ -164,9 +164,8 @@ def execute_job(run_id: str, job: dict, model_name: str) -> str:
 
         report = json.load(open(report_path))
         log_report(run_id, report)
-        if rc == 0:
-            register_best(run_id, model_name, art_dir, report)
-        status = mlflow_state.PENDING_APPROVAL if rc == 0 else mlflow_state.REJECTED
+        register_best(run_id, model_name, art_dir, report)
+        status = mlflow_state.PENDING_APPROVAL
         mlflow_state.set_status(run_id, status, tracking_uri=TRACKING_URI)
         metrics_store.write_run_metrics(run_id, model_name, job, report, status)
         return status

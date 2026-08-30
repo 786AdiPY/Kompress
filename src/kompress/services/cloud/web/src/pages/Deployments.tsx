@@ -244,9 +244,9 @@ export default function Deployments() {
     <div className="stack">
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <div>
-          <h1>Deployments</h1>
+          <h1>CI Pipeline Deployments</h1>
           <div className="muted">
-            Registered models, their Production version, and rollback controls.
+            Automated CI/CD pipeline deployments, production model catalog & rollback controls (Front Door A).
           </div>
         </div>
         <button
