@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Compression Report (the Plan)",
+  "description": "One static, human-reviewable summary per model per run: what the base model was, what compression produced the winning variant, and the size / latency / accuracy deltas of that variant vs the native baseline. This is the artifact Front Door B shows a human before they consent to deploy, and the artifact Front Door A can archive without needing an MLflow instance.",
+  "type": "object",
+  "required": ["model", "framework", "task", "target_hardware", "base_model", "best_variant", "deltas", "variants", "gate_passed"],
+  "properties": {
+    "model": {"type": "string"},
+    "framework": {"type": "string"},
+    "task": {"type": "string"},
+    "target_hardware": {
+      "type": "string",
+      "description": "Where the reported latency was measured, e.g. cpu-generic, nvidia-a10g, apple-m3, sony-imx500. Compression metrics are meaningless without this."
+    },
+    "base_model": {
+      "type": "object",
+      "required": ["path", "hash", "size_kb"],
+      "properties": {
+        "path": {"type": "string"},
+        "hash": {"type": "string", "description": "sha256 of the native model artifact for provenance / rollback identity"},
+        "size_kb": {"type": "number"},
+        "mlflow_run_id": {"type": ["string", "null"], "description": "null when the run had no MLflow instance (Front Door A headless case)"}
+      }
+    },
+    "best_variant": {
+      "type": "object",
+      "required": ["name", "kind", "format", "size_kb"],
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"type": "string"},
+        "format": {"type": "string", "description": "onnx-fp32, onnx-int8-dynamic, tensorrt-int8, ..."},
+        "size_kb": {"type": "number"}
+      }
+    },
+    "deltas": {
+      "type": "object",
+      "description": "Best variant vs native baseline. Sign convention: size/latency negative = smaller/faster (good); accuracy_delta negative = worse.",
+      "required": ["size_delta_pct", "latency_ms_delta", "speedup_vs_native"],
+      "properties": {
+        "size_delta_pct": {"type": "number", "description": "e.g. -70.0 means 70% smaller"},
+        "latency_ms_delta": {"type": "number", "description": "e.g. +2.0 means 2ms slower"},
+        "speedup_vs_native": {"type": "number"},
+        "accuracy_delta": {"type": ["number", "null"]},
+        "auc_delta": {"type": ["number", "null"]},
+        "f1_delta": {"type": ["number", "null"]},
+        "rmse_delta": {"type": ["number", "null"]}
+      }
+    },
+    "variants": {
+      "type": "array",
+      "description": "Every benchmarked variant (native + compressed) so a reviewer can see the full trade-off table, not just the winner.",
+      "items": {"type": "object"}
+    },
+    "gate_passed": {"type": "boolean"},
+    "gate_report": {"type": "object", "description": "Verbatim per-variant gate checks."}
+  }
+}

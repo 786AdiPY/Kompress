@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  job.example.yaml — one compression job a caller submits to the plugin.
+#
+#  Run it (locally or from any orchestrator that can `docker run` our image):
+#     python plugin/run_job.py --job plugin/job.example.yaml
+#     docker run --rm -v $PWD:/work compression-pipeline:local \
+#         python plugin/run_job.py --job /work/plugin/job.example.yaml
+#
+#  Output: artifacts/<model.name>/compression_report.json (the "Plan") plus the
+#  compressed ONNX/TRT variants. Exit code is non-zero if the gate fails.
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  name: churn                        # output dir: artifacts/churn/
+  ref: artifacts/churn/model.pkl     # pointer to the trained model (path or s3://, mlflow://)
+  framework: xgboost                 # xgboost | lightgbm | sklearn | pytorch
+  task: binary_classification
+  num_classes: 2
+  target: churn
+  features:
+    - { name: tenure_months,      dtype: float }
+    - { name: monthly_charges,    dtype: float }
+    - { name: total_charges,      dtype: float }
+    - { name: num_products,       dtype: int   }
+    - { name: support_calls,      dtype: int   }
+    - { name: payment_delay_days, dtype: int   }
+    - { name: contract_type,      dtype: int, choices: [0, 1, 2] }
+    - { name: internet_service,   dtype: int   }
+    - { name: online_security,    dtype: int   }
+    - { name: tech_support,       dtype: int   }
+
+test_data:
+  ref: data/test.csv                 # test set only — no training set required
+
+target_hardware: cpu-generic         # drives compressor selection (see common/hardware.py)
+
+# Optional — omit to let target_hardware decide:
+# compression:
+#   methods: [onnx_fp32, onnx_int8_dynamic]
+
+gate:
+  max_acc_drop: 0.01
+  max_auc_drop: 0.01

@@ -7,17 +7,31 @@ __pycache__/
 venv/
 env/
 
+# ── Local secrets ─────────────────────────────────────────────────────────────
+.env
+
 # ── Kompress runtime state (generated per run — never commit) ────────────────
 # api_runs: per-job working dirs (Front Door B)
 # queue:    filesystem job queue (worker/queue.py default)
 # mlruns / mlartifacts: MLflow artifact store when no server is configured
+# mlflow_store: local MLflow tracking server's backend (sqlite db + artifacts)
 api_runs/
 queue/
 mlruns/
 mlartifacts/
+mlflow_store/
 *.db
-mlflow_store/mlflow.db
 .run-logs/
+
+# Standalone pipeline scripts (to_onnx.py, compress.py, ...) default to writing
+# straight into artifacts/ when run outside the API/worker's per-run dirs —
+# regenerated on every run, never commit. The bundled demo models live in
+# artifacts/<name>/ subfolders (e.g. artifacts/churn/) and are unaffected,
+# since these globs don't cross a directory boundary.
+artifacts/*.json
+artifacts/*.yaml
+artifacts/model.pkl
+artifacts/model_fp32.onnx
 
 # ── Node / web (also covered by web/.gitignore) ─────────────────────────────
 node_modules/

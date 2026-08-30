@@ -14,7 +14,10 @@ COPY . .
 
 ENV PIPELINE_CONFIG=/app/pipeline.yaml \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app/src:/app
+
+# Install package in editable mode
+RUN pip install --no-cache-dir -e .
 
 # Default command trains; compose overrides per stage.
-CMD ["python", "train/train.py"]
+CMD ["python", "src/kompress/tools/train.py"]

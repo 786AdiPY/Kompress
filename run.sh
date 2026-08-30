@@ -18,6 +18,15 @@ WITH_DL=0
 
 mkdir -p "$LOGS"
 
+# Local secrets (object storage + metrics DB creds) — see .env.example if present.
+# Never committed; silently skipped when absent so a bare clone still runs.
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
+
 log()  { printf '\033[1;36m[kompress]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[kompress]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[kompress]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -31,6 +40,15 @@ command -v npm >/dev/null || die "npm not found. On Arch:  sudo pacman -S nodejs
 log "using $($PY --version) at $PY"
 
 # ── python env ───────────────────────────────────────────────────────────────
+# A venv's console scripts (pip, mlflow, uvicorn, ...) hardcode an absolute
+# shebang path to the venv's python3. If this directory got moved or renamed
+# since the venv was created (e.g. the project folder was renamed), every
+# script in it breaks with "bad interpreter: No such file or directory" even
+# though the dir itself still exists — so recreate it when that happens.
+if [[ -d "$VENV" ]] && ! "$VENV/bin/pip" --version >/dev/null 2>&1; then
+  warn "stale venv detected (likely moved/renamed project dir) — recreating .venv"
+  rm -rf "$VENV"
+fi
 if [[ ! -d "$VENV" ]]; then
   log "creating venv at .venv"
   "$PY" -m venv "$VENV"
@@ -70,13 +88,16 @@ if spec and spec.submodule_search_locations:
 PY
 
 # ── web deps ─────────────────────────────────────────────────────────────────
-if [[ ! -d "$ROOT/web/node_modules" ]]; then
+WEB_DIR="$ROOT/src/kompress/services/cloud/web"
+if [[ ! -d "$WEB_DIR" ]]; then WEB_DIR="$ROOT/web"; fi
+
+if [[ ! -d "$WEB_DIR/node_modules" ]]; then
   log "installing web dependencies (npm install)"
-  ( cd "$ROOT/web" && npm install --silent )
+  ( cd "$WEB_DIR" && npm install --silent )
 fi
 
 # ── runtime configuration ────────────────────────────────────────────────────
-export PYTHONPATH="$ROOT"
+export PYTHONPATH="$ROOT/src:$ROOT"
 export MLFLOW_EXPERIMENT="self-serve-compression"
 export API_RUNS_DIR="$ROOT/api_runs"
 export KOMPRESS_QUEUE_DIR="$ROOT/queue"
@@ -118,17 +139,20 @@ else
   export MLFLOW_TRACKING_URI="$SQLITE_URI"
 fi
 
+# Ensure kompress is installed in editable mode so changes in src/ apply instantly
+pip install -e "$ROOT" --no-deps >/dev/null 2>&1 || true
+
 # ── API (queue mode) + worker + dashboard ────────────────────────────────────
-log "starting API on :8000"
-uvicorn api.app:app --host 127.0.0.1 --port 8000 --log-level warning >"$LOGS/api.log" 2>&1 &
+log "starting API on :8000 (with auto-reload on src/ changes)"
+uvicorn kompress.services.cloud.api.app:app --host 127.0.0.1 --port 8000 --reload --reload-dir "$ROOT/src" --log-level warning >"$LOGS/api.log" 2>&1 &
 PIDS+=("$!")
 
 log "starting compression worker"
-python -m worker.worker --poll 2 >"$LOGS/worker.log" 2>&1 &
+python -m kompress.services.cloud.worker.worker --poll 2 >"$LOGS/worker.log" 2>&1 &
 PIDS+=("$!")
 
 log "starting dashboard on :5173"
-( cd "$ROOT/web" && npm run dev -- --port 5173 --host 127.0.0.1 ) >"$LOGS/web.log" 2>&1 &
+( cd "$WEB_DIR" && npm run dev -- --port 5173 --host 127.0.0.1 ) >"$LOGS/web.log" 2>&1 &
 PIDS+=("$!")
 
 sleep 4

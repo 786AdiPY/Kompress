@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Compression Job Manifest (Gate A)",
+  "description": "The per-request input a caller submits to compress ONE model. This is the contract every front door speaks: an orchestrator (Jenkins/Airflow/GitHub Actions) passes a job.yaml on disk; the self-serve API accepts the same shape as JSON with `ref`s that must be pointers (S3/MLflow URIs), never raw uploads. run_job.py materializes this into the pipeline's internal ModelSpec, so a job manifest is deliberately a single-model slice of pipeline.yaml supplied at call time rather than committed to the repo.",
+  "type": "object",
+  "required": ["model", "test_data", "target_hardware"],
+  "properties": {
+    "model": {
+      "type": "object",
+      "required": ["ref", "framework", "task"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Logical model name; determines the artifacts/<name>/ output dir. Defaults to the framework name if omitted."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Pointer to the trained model artifact: a local path (Front Door A) or a URI such as s3://... or mlflow://... (Front Door B). Never raw bytes."
+        },
+        "framework": {
+          "type": "string",
+          "enum": ["xgboost", "lightgbm", "sklearn", "pytorch"],
+          "description": "Which adapter loads and ONNX-exports the model."
+        },
+        "task": {
+          "type": "string",
+          "enum": ["binary_classification", "multiclass_classification", "regression"]
+        },
+        "num_classes": {"type": "integer", "default": 2},
+        "target": {"type": "string", "description": "Label column name in the test data."},
+        "features": {
+          "type": "array",
+          "description": "Ordered feature schema (drives ONNX input shape + serving request model). Same shape as pipeline.yaml features.",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string"},
+              "dtype": {"type": "string", "enum": ["float", "int", "double", "long"], "default": "float"},
+              "choices": {"type": "array"}
+            }
+          }
+        }
+      }
+    },
+    "test_data": {
+      "type": "object",
+      "required": ["ref"],
+      "description": "Test set ONLY — no training set is needed; compression is validated, not retrained.",
+      "properties": {
+        "ref": {"type": "string", "description": "Pointer to the test CSV (local path or URI)."}
+      }
+    },
+    "target_hardware": {
+      "type": "string",
+      "description": "Where the compressed model will be deployed. DRIVES which compressors run (see common/hardware.py) and where latency is measured. e.g. cpu-generic, nvidia-gpu, sony-imx500, arm-npu."
+    },
+    "compression": {
+      "type": "object",
+      "description": "Optional override. If methods is given it wins over the hardware-derived default.",
+      "properties": {
+        "methods": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Explicit compressor names from compressors/_REGISTRY."
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "description": "Accuracy-degradation thresholds the compressed variant must satisfy. Defaults applied if omitted.",
+      "properties": {
+        "max_acc_drop": {"type": "number", "default": 0.01},
+        "max_auc_drop": {"type": "number", "default": 0.01},
+        "max_rmse_rise": {"type": "number", "default": 0.05}
+      }
+    }
+  }
+}

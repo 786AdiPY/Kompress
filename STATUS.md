@@ -1,6 +1,6 @@
 # Kompress — Project Status
 
-_Last updated: 2026-08-02_
+_Last updated: 2026-08-30_
 
 ## What Kompress is
 
@@ -15,26 +15,31 @@ It has **two front doors onto one engine**:
 | | **Front Door A** — orchestrator plugin | **Front Door B** — self-serve platform |
 |---|---|---|
 | Who uses it | Jenkins / GitHub Actions / Airflow | A human, via the dashboard |
-| Entry point | `plugin/run_job.py` (a job manifest) | `api/app.py` (REST) + `web/` (React UI) |
+| Entry point | `src/kompress/services/plugin/run_job.py` (`kompress-job`) | `src/kompress/services/cloud/api/app.py` (`kompress-api`) + `web/` (React UI) |
 | Where compute runs | the caller's own runner | our workers (queue + worker pool) |
 | MLflow | the caller's own (or none) | the platform's own |
 
-The unit of work is the same everywhere: `plugin/run_job.py` running the engine image.
+The unit of work is the same everywhere: `src/kompress/services/plugin/run_job.py` running the engine image.
 
 ## Architecture / component map
 
 ```
-adapters/     framework plugins: xgboost | lightgbm | sklearn | pytorch  -> ONNX
-compressors/  technique plugins: onnx_fp32 | onnx_int8_dynamic/static | trt_int8
-common/       config loader, feature schema, metrics, hardware->compressors map
-plugin/       job manifest schema + run_job.py (Front Door A entry point)
-report/       report.schema.json + generate_report.py (the "Plan")
-registry/     mlflow_state.py (tag-based approval state) + promote.py (declarative promote/rollback)
-export/        device export targets: onnx (✓) | tensorrt (✓) | tflite (stub) | coreml (stub)
-worker/        executor.py (run job -> store in MLflow) + queue.py (FileQueue) + worker.py (loop)
-api/          FastAPI (Front Door B): submit, review queue, approve/reject/rollback, export, models
-web/          React + TS dashboard: Landing, Dashboard, Submit, Run Detail (Plan), Deployments
-tests/         smoke_test.py (platform CI gate)
+src/kompress/
+├── engine/
+│   ├── adapters/      framework plugins: xgboost | lightgbm | sklearn | pytorch -> ONNX
+│   ├── compressors/   technique plugins: onnx_fp32 | onnx_int8_dynamic/static | trt_int8
+│   ├── export/        device export targets: onnx (✓) | tensorrt (✓) | tflite (stub) | coreml (stub)
+│   ├── pipeline/      benchmark.py, compress.py, gate.py, generate_report.py (the "Plan")
+│   ├── registry/      mlflow_state.py (tag-based approval state) + promote.py (declarative promote/rollback)
+│   └── common/        config loader, feature schema, metrics, hardware map, objstore, metrics_store
+├── services/
+│   ├── cloud/api/     FastAPI (Front Door B): submit, review queue, approve/reject/rollback, export, uploads
+│   ├── cloud/worker/  executor.py (run job -> store in MLflow & Supabase) + queue.py + worker.py
+│   ├── cloud/web/     React + TS dashboard: Landing, Dashboard, Submit (file upload UI), Run Detail, Deployments
+│   ├── cloud/serve/   Model serving endpoint wrapper
+│   └── plugin/        job manifest schema + run_job.py (Front Door A entry point)
+└── tools/             train.py, monitor.py, hf_deploy.py
+tests/                 smoke_test.py (platform CI gate)
 .github/workflows/ci.yml   platform CI (backend smoke + frontend build)
 .github/actions/compress-model   reusable GitHub Action (Front Door A adapter)
 integrations/README.md     how orchestrators call Front Door A
@@ -43,30 +48,36 @@ integrations/README.md     how orchestrators call Front Door A
 ### The state machine lives in MLflow tags (no separate DB)
 `pending_gate → pending_approval → approved | rejected | failed`. The dashboard's review
 queue is just `list_by_tag(status=...)`; approve/reject/rollback set the tag. See
-`registry/mlflow_state.py`.
+`src/kompress/engine/registry/mlflow_state.py`.
 
 ### Execution model (Front Door B)
 `POST /runs` creates an MLflow run (`pending_gate`) and **enqueues** a job. A separate
-**worker** (`worker/worker.py`) claims it, runs the engine in isolation, and **stores the
+**worker** (`src/kompress/services/cloud/worker/worker.py`) claims it, runs the engine in isolation, and **stores the
 result in MLflow** (delta metrics + registered ONNX + status tag). Toggle with
 `KOMPRESS_EXECUTION=inline|queue`. Queue backend is a dependency-free filesystem queue
-(`worker/queue.py`); Redis/RQ or one Kubernetes Job per message swap in via the same interface.
+(`src/kompress/services/cloud/worker/queue.py`); Redis/RQ or one Kubernetes Job per message swap in via the same interface.
 
 ## What works / verified
 
+- ✅ **Package Restructure & Packaging** — Restructured codebase into an installable `kompress` Python package under `src/kompress/` with `pyproject.toml` console scripts (`kompress-job`, `kompress-api`, `kompress-worker`).
+- ✅ **Storage & Database Connectors** — Cloudflare R2 / Backblaze B2 object storage integration via `src/kompress/engine/common/objstore.py` and Supabase Postgres run metrics logging (`run_metrics` table) via `src/kompress/engine/common/metrics_store.py`.
+- ✅ **Direct File Upload UI** — Integrated direct file upload intake on `SubmitJob.tsx` (`POST /uploads`) streaming `.pkl` models & `.csv` test datasets directly to object storage and passing generated `s3://` pointers to `POST /runs`.
 - ✅ **Front Door A** — job manifest → materialized pipeline → compress/benchmark/gate/report; hardware drives compressor selection; features auto-inferred from the test CSV.
 - ✅ **Report ("Plan")** — schema-validated `compression_report.json` (base hash, size/latency/accuracy deltas, variants table, gate result).
-- ✅ **Front Door B API** — submit (pointer-only, 400/501/202 policy), review queue, report, artifact download, approve → promote, reject, rollback, `/models`, `/export`.
+- ✅ **Front Door B API** — submit, uploads, review queue, report, artifact download, approve → promote, reject, rollback, `/models`, `/export`.
 - ✅ **Approval → MLflow** — approve registers the winning ONNX to the Model Registry and promotes to Production; rollback = promote an older run.
-- ✅ **Worker/queue** — verified end-to-end: submit → queued → worker compresses → **registered in MLflow** → `pending_approval`.
-- ✅ **Export layer** — ONNX export returns the file; TensorRT returns a 501 with `trtexec` guidance; `/export-formats` lists availability per hardware. The **"Download for device"** section on Run Detail renders one card per target (recommended format flagged from `target_hardware`), downloads the available ones, and shows unavailable converters disabled with the server's enable instructions.
-- ✅ **Platform CI** — `tests/smoke_test.py` (imports + schemas + engine on a fixture) passes; frontend `npm run build` passes.
+- ✅ **Worker/queue** — verified end-to-end: submit → queued → worker compresses → **registered in MLflow & Supabase** → `pending_approval`.
+- ✅ **Streamlined UI Compression Flow** — Refactored Run Detail to follow a linear 5-step flow: `Compression Results` → `Plan Overview` → `Accuracy Gate: PASSED` → `Recommended Variant (e.g. INT8)` → `[ Download / Export ]`. Scoped the Deployments view to automated CI pipeline deployment status.
+- ✅ **HuggingFace Deployment Tooling** — Added `src/kompress/tools/hf_deploy.py` for automated HF Spaces deployment.
+- ✅ **Platform CI** — `tests/smoke_test.py` (imports + schemas + engine on a fixture) verified and passing with package structure; frontend `npm run build` passes.
 - ✅ **Dashboard** — Landing + 4 pages build clean; API contract review passed (`contract_matches: true`).
+- ✅ **Cleaned Git Tracking** — Purged unneeded generated MLflow databases and output artifacts from git tracking, keeping working tree clean.
 
 ## Currently working on / pending
 
-- ⏳ **DL / PyTorch path** — newer `torch` (2.13) changed `torch.onnx.export` (dynamo default); `adapters/pytorch_adapter.py` needs a `dynamo=False` fix for the DL sample to compress. Not in CI (smoke test uses sklearn) and `torch` is opt-in, so it doesn't affect the build.
-- ✅/⏳ **Design** — a product-grade UI refresh (Lexend, design tokens, product tour) and a marketing landing page have landed (commits `ff63661`, `9eda4ba`). Further design tweaks map onto `web/src/styles/tokens.css` + component CSS.
+- ⏳ **Postgres & R2 Integration Branch** — Branch `feature/postgres-r2-integration` active with Supabase and Cloudflare R2 / B2 storage connectors wired into the pipeline and upload handler.
+- ⏳ **DL / PyTorch path** — newer `torch` (2.13) changed `torch.onnx.export` (dynamo default); `src/kompress/engine/adapters/pytorch_adapter.py` needs a `dynamo=False` fix for the DL sample to compress. Not in CI (smoke test uses sklearn) and `torch` is opt-in, so it doesn't affect the build.
+- ✅ **Design** — product-grade UI refresh (Lexend, design tokens, product tour) and marketing landing page landed.
 
 ## Sample models to test with
 
@@ -83,9 +94,13 @@ Leave **Features blank** in the UI — they're auto-inferred from the test CSV (
 ## How to run it (Linux / Arch)
 
 ```bash
-./run.sh              # sets up venv + web deps, starts everything, prints URLs
+./run.sh              # sets up venv, installs editable kompress package, starts everything with live auto-reload
 ./run.sh --with-dl    # also installs torch + onnxscript for the PyTorch path
 ```
+
+> **Live Auto-Reloading**: You do **not** need to restart `./run.sh` on code updates.
+> - **React UI (`web/`)**: Vite Dev Server automatically hot-reloads (HMR) browser UI changes instantly upon saving.
+> - **Python Backend (`src/kompress/`)**: Installed in editable mode (`pip install -e .`) with Uvicorn watcher (`--reload --reload-dir src`), auto-reloading API endpoints dynamically on every Python code change.
 
 Services: **Dashboard** http://localhost:5173 · **API** http://localhost:8000/docs ·
 **MLflow UI** http://localhost:5000 (best-effort; needs Python < 3.14). Ctrl+C stops all.
@@ -104,15 +119,38 @@ You compress a model you bring — the bundled churn/house samples are just conv
 A job needs three things: the **model**, its **test set**, and the **target hardware**
 (framework/task/target come along too; features are auto-inferred from the test CSV).
 
-### Why "link/pointer", not a file picker — and how to still just upload a `.pkl`
+### Size tiers: direct upload (<10GB, primary) vs. pointer-only (≥10GB, deferred)
 
-The API is **pointer-based** (`s3://…`, `mlflow://…`), never a raw file upload, for three reasons:
-an uploaded pickle is **arbitrary code execution** on unpickle; test datasets can be **huge**; and
-it keeps the API stateless. The `.pkl`/CSV still get uploaded — just **via object storage**, so the
-raw bytes never reach the compression process, only the resulting pointer does. Two ways to test:
+Two intake paths, chosen automatically by size — not a UI toggle:
+
+| Tier | Size | Path | Status |
+|---|---|---|---|
+| **Direct upload** | **< 10GB** (`KOMPRESS_MAX_UPLOAD_GB`, default 10) | `POST /uploads` streams the file into object storage (MinIO/S3), returns an `s3://` pointer, submit that to `POST /runs` | ✅ primary path, implemented |
+| **Pointer-only** | **≥ 10GB** | caller hosts the file themselves and submits its `s3://…` ref directly to `POST /runs` — `/uploads` refuses it | supported, not the tuned/tested path right now (deferred) |
+
+`POST /uploads` enforces the ceiling **before** doing any real work: a `Content-Length` over the
+limit is rejected immediately (`413`, no upload attempted); a chunked/lying upload is aborted
+**mid-stream** the moment it crosses the limit (via a size-counting wrapper around the read —
+verified: an oversized stream is caught after a few chunks, not after buffering the whole file).
+Get a `413` → the message tells you to submit a pointer instead.
+
+Why pointer, not always-upload: an uploaded pickle is **arbitrary code execution** on unpickle;
+some datasets are legitimately huge; and pointers keep the API stateless. Below 10GB we accept the
+UX cost of "upload a file" by re-hosting it ourselves (object storage) so the engine still only
+ever consumes pointers internally — the raw bytes never reach the compression process.
+
+**Resource sizing for the upload tier** (`deploy/docker-compose.oss.yml`): workers are sized
+`mem_limit: 32g` / `cpus: 4` per the rule of thumb in `src/kompress/engine/common/limits.py` — ~2-3× model size in
+memory (load + export), ~3-4× in scratch disk (original + ONNX export + variants + calibration
+data) → ~30GB RAM / ~40GB disk headroom per concurrent job at the 10GB ceiling. `deploy: replicas: 2`
+means 2 concurrent jobs at that sizing; scale workers and this budget multiplies per replica.
+nginx (`deploy/nginx.conf`) is set to `client_max_body_size 11g` (headroom above the 10GB app-level
+cap, so the API's own 413 fires — not nginx's generic one) with 1800s timeouts for the transfer.
+
+### How to test it
 
 **A. Local (`./run.sh`, `API_ALLOW_LOCAL_PATHS=1`)** — drop your files in the repo and reference them
-by path (no object store needed):
+by path (no object store needed, and no size ceiling applied — that check only lives on `/uploads`):
 
 ```bash
 # put your model + test csv anywhere under the repo, then submit:
@@ -123,11 +161,11 @@ curl -X POST localhost:8000/runs -H 'content-type: application/json' -d '{
   "target_hardware":"cpu-generic"}'
 ```
 
-**B. OSS stack / hosted (`API_ALLOW_LOCAL_PATHS=0`)** — upload to object storage first, then submit
-the returned pointer (this is exactly what a "upload a file" button in the UI does under the hood):
+**B. OSS stack / hosted (`API_ALLOW_LOCAL_PATHS=0`)** — upload to object storage first (this is
+exactly what an "upload a file" button in the UI does under the hood), then submit the pointer:
 
 ```bash
-# 1. upload the model -> get an s3:// pointer
+# 1. upload the model -> get an s3:// pointer (413 if it's >= the 10GB ceiling)
 curl -F 'file=@my_model.pkl' -F 'kind=model' localhost:8000/uploads
 #    -> {"ref":"s3://kompress/uploads/model/…_my_model.pkl", …}
 # 2. upload the test set the same way (kind=test_data), then
@@ -159,7 +197,7 @@ call its API over the network** to compress models — the SaaS/hosted form of F
 
 > Note on the two ways to consume Kompress:
 > - **Plugin (no hosting needed):** the caller runs the engine image in their own CI
->   (`docker run … python plugin/run_job.py`). Nothing of ours in the cloud.
+>   (`docker run … python src/kompress/services/plugin/run_job.py`). Nothing of ours in the cloud.
 > - **Hosted API (this section):** the caller hits our cloud endpoint. This is what
 >   "provide its API for orchestration" means.
 
@@ -171,7 +209,7 @@ call its API over the network** to compress models — the SaaS/hosted form of F
         ▼
    ┌──────────────┐        ┌───────────────────────────┐
    │  Ingress /   │──────▶ │  API (FastAPI)  Deployment │  stateless, N replicas, HPA
-   │  LoadBalancer│        │  api/app.py                │  KOMPRESS_EXECUTION=queue
+   │  LoadBalancer│        │  .../cloud/api/app.py     │  KOMPRESS_EXECUTION=queue
    └──────────────┘        └───────────┬───────────────┘
         │ (static)                     │ enqueue
         ▼                              ▼
@@ -182,7 +220,7 @@ call its API over the network** to compress models — the SaaS/hosted form of F
                                         │ claim
                                         ▼
                            ┌───────────────────────────┐
-                           │  Workers (worker/worker.py)│  scale on queue depth (KEDA);
+                           │  Workers (...worker.py)   │  scale on queue depth (KEDA);
                            │  1 isolated pod/Job per run│  sandboxed — pickle = RCE risk
                            └───────────┬───────────────┘
                                         │ store
@@ -199,7 +237,7 @@ call its API over the network** to compress models — the SaaS/hosted form of F
 |---|---|---|
 | **API** | container Deployment behind an Ingress/LB (K8s), or Cloud Run / ECS Fargate / Container Apps | stateless (state is in MLflow); set `KOMPRESS_EXECUTION=queue`; autoscale on CPU/RPS |
 | **Workers** | separate Deployment, **or one Kubernetes Job per message** (best isolation) | scale on **queue depth** (KEDA / HPA); each pod ephemeral & sandboxed |
-| **Queue** | Redis (managed), SQS, Pub/Sub — **or** native K8s Jobs (API creates a Job, no broker) | swap `worker/queue.py`'s `FileQueue` for a `RedisQueue` (same interface) |
+| **Queue** | Redis (managed), SQS, Pub/Sub — **or** native K8s Jobs (API creates a Job, no broker) | swap `src/kompress/services/cloud/worker/queue.py`'s `FileQueue` for a `RedisQueue` (same interface) |
 | **MLflow** | tracking server container + **managed Postgres** + **S3/GCS artifact store** | replaces the dev sqlite; needed for concurrent writers + durable artifacts |
 | **Dashboard** | `npm run build` → static assets on a bucket + CDN, or an nginx sidecar | point it at the API base URL (`VITE_API_BASE`) |
 | **Object storage** | S3 / GCS / Azure Blob | holds uploaded model + test-data pointers AND the MLflow registry artifacts |
@@ -212,7 +250,7 @@ The current build is dev-grade. To expose the API publicly you need to add:
 1. **AuthN/AuthZ** — the API has **no auth today**. Add an API-key or OAuth2/JWT dependency
    (FastAPI dependency on every route) + per-tenant keys. Without this, do **not** expose it.
 2. **Queue backend** — `FileQueue` needs a shared filesystem (fine on one node / a shared PVC,
-   not across nodes). Implement `RedisQueue(QueueBackend)` in `worker/queue.py`, or have the API
+   not across nodes). Implement `RedisQueue(QueueBackend)` in `src/kompress/services/cloud/worker/queue.py`, or have the API
    create a **K8s Job per run** and drop the broker entirely.
 3. **MLflow store** — move off sqlite to **Postgres + object-store artifacts**
    (`--backend-store-uri postgresql://… --default-artifact-root s3://…`).
@@ -296,10 +334,10 @@ Kompress is deployment-ready with the OSS stack via pluggable, env-driven connec
 
 | Connector | Code / selector | What it does |
 |---|---|---|
-| **FileQueue** (default) | `worker/queue.py`, `KOMPRESS_QUEUE=file` | zero-dependency filesystem job queue for single-node / dev |
-| **RedisQueue** | `worker/queue.py`, `KOMPRESS_QUEUE=redis://…` (or `valkey://`) | multi-node job queue on **Valkey/Redis**; atomic claim via `LMOVE` (reliable-queue: a crashed worker's job isn't lost) |
-| **Object store** | `common/objstore.py`, `S3_ENDPOINT_URL` + `AWS_*` | **MinIO/S3** — resolves `s3://` pointers (download) and backs uploads. Endpoint-aware: set `S3_ENDPOINT_URL=http://minio:9000` for MinIO, unset for real AWS S3 |
-| **Upload endpoint** | `POST /uploads` (`api/app.py`) | streams a user's uploaded `.pkl`/CSV into object storage and returns an `s3://` pointer — so the UI offers "upload a file" while the engine still only ever consumes pointers |
+| **FileQueue** (default) | `src/kompress/services/cloud/worker/queue.py`, `KOMPRESS_QUEUE=file` | zero-dependency filesystem job queue for single-node / dev |
+| **RedisQueue** | `src/kompress/services/cloud/worker/queue.py`, `KOMPRESS_QUEUE=redis://…` (or `valkey://`) | multi-node job queue on **Valkey/Redis**; atomic claim via `LMOVE` (reliable-queue: a crashed worker's job isn't lost) |
+| **Object store** | `src/kompress/engine/common/objstore.py`, `S3_ENDPOINT_URL` + `AWS_*` | **MinIO/S3** — resolves `s3://` pointers (download) and backs uploads. Endpoint-aware: set `S3_ENDPOINT_URL=http://minio:9000` for MinIO, unset for real AWS S3 |
+| **Upload endpoint** | `POST /uploads` (`src/kompress/services/cloud/api/app.py`) | streams a user's uploaded `.pkl`/CSV into object storage and returns an `s3://` pointer — so the UI offers "upload a file" while the engine still only ever consumes pointers. Enforces the **<10GB direct-upload ceiling** (`src/kompress/engine/common/limits.py`, `KOMPRESS_MAX_UPLOAD_GB`) — `413` fast-path on `Content-Length`, aborts mid-stream otherwise; ≥10GB models use the pointer-only path directly against `POST /runs` instead |
 | **MLflow (Postgres + MinIO)** | `MLFLOW_TRACKING_URI`, `deploy/Dockerfile.mlflow` | tracking server + model registry; **PostgreSQL** metadata (concurrent-writer safe) + **MinIO** artifact store (replaces dev sqlite) |
 | **Dashboard (nginx)** | `web/Dockerfile`, `deploy/nginx.conf` | serves the built SPA and reverse-proxies `/api` → the API service |
 | **OSS compose** | `deploy/docker-compose.oss.yml` | one command wires Postgres + MinIO + Valkey + MLflow + API + N workers + dashboard |

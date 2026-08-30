@@ -42,6 +42,8 @@ start "MLflow" cmd /k "cd /d "%ROOT%" && set PYTHONUTF8=1 && python -m mlflow se
 echo Waiting for MLflow to start...
 timeout /t 10 /nobreak >nul
 
+set PYTHONPATH=%ROOT%src;%ROOT%
+
 :: Step 2 — Generate data
 echo [2/9] Generating synthetic dataset...
 python data/generate.py --n 10000 --out data
@@ -50,43 +52,43 @@ echo Done.
 
 :: Step 3 — Train (classic-ML baseline; skip if you bring your own model)
 echo [3/9] Training baseline model...
-python train/train.py
+python -m kompress.tools.train
 if errorlevel 1 ( echo FAILED: training & goto :error )
 echo Done.
 
 :: Step 4 — Compress: export ONNX FP32 + run every configured compressor
 echo [4/9] Compressing (ONNX FP32 + INT8 quantization + TRT if GPU)...
-python compress/compress.py
+python -m kompress.engine.pipeline.compress
 if errorlevel 1 ( echo FAILED: compression & goto :error )
 echo Done.
 
 :: Step 5 — Benchmark all variants
 echo [5/9] Benchmarking native + all compressed variants...
-python benchmark/benchmark.py
+python -m kompress.engine.pipeline.benchmark
 if errorlevel 1 ( echo FAILED: benchmark & goto :error )
 echo Done.
 
 :: Step 6 — Quality gate
 echo [6/9] Running quality gate...
-python gate/gate.py
+python -m kompress.engine.pipeline.gate
 if errorlevel 1 ( echo FAILED: quality gate blocked deployment & goto :error )
 echo Done.
 
 :: Step 7 — Register best variant
 echo [7/9] Registering best variant to MLflow...
-python registry/register.py
+python -m kompress.engine.registry.register
 if errorlevel 1 ( echo FAILED: registry & goto :error )
 echo Done.
 
 :: Step 8 — Deploy to Hugging Face Spaces (skipped unless HF_TOKEN + space_id set)
 echo [8/9] Deploying to Hugging Face Spaces...
-python deploy/hf_spaces_deploy.py
+python -m kompress.tools.hf_deploy
 echo Done.
 
 :: Step 9 — Drift monitor
 echo [9/9] Running drift detection...
 set INCOMING_CSV=data/test.csv
-python monitor/drift.py
+python -m kompress.tools.monitor
 echo Done.
 
 echo.
@@ -98,7 +100,7 @@ echo ============================================================
 echo.
 
 :: Start serve in new window
-start "Serve" cmd /k "cd /d "%ROOT%" && set PYTHONUTF8=1 && set MODELS_INDEX=artifacts/models.json && uvicorn serve.app:app --host 0.0.0.0 --port 8000"
+start "Serve" cmd /k "cd /d "%ROOT%" && set PYTHONUTF8=1 && set MODELS_INDEX=artifacts/models.json && uvicorn kompress.services.cloud.serve.app:app --host 0.0.0.0 --port 8000"
 
 echo API server starting in new window...
 echo Press any key to exit this window (server keeps running).
