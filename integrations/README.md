@@ -1,18 +1,18 @@
 # Integrations — using the compression platform from your MLOps stack
 
-The platform has **one core engine** and **two front doors** onto it. Everything
-here is Front Door A: how an external orchestrator runs compression as a stage.
+The platform has **one core engine** and **two entry gates** onto it. Everything
+here is Gate B: how an external CLI or orchestrator runs compression as a stage.
 
 ```
                     ┌─────────────────────────────────────────────┐
-                    │  Core engine                                 │
-                    │  plugin/run_job.py  (job manifest in,        │
+                    │  Core engine                                │
+                    │  plugin/run_job.py  (job manifest in,       │
                     │  compressed variant + compression_report.json out)
                     └─────────────────────────────────────────────┘
                        ▲                                   ▲
-        Front Door A   │                                   │  Front Door B
-   (this doc: headless,│                                   │  (api/ — humans,
-    any orchestrator)  │                                   │   consent, dashboard)
+        Gate B         │                                   │  Gate A
+   (this doc: headless,│                                   │  (cloud / api /
+    orchestration/CLI) │                                   │   consent, dashboard)
 ```
 
 ## The one command every orchestrator calls
@@ -33,58 +33,38 @@ docker run --rm -v "$PWD:/work" -w /work compression-pipeline:local \
   compressed variants. Exit code is non-zero iff the accuracy gate fails.
 - **MLflow is optional here.** Set `MLFLOW_TRACKING_URI` to *your own* tracking
   server to log the run; leave it unset and the report file is the source of
-  truth. Front Door A never depends on the platform's infra.
+  truth. Gate B never depends on the platform's infra.
 
 ## Adapter layers (pick the thinnest that fits)
 
 | Layer | Use when | How |
 |---|---|---|
-| Raw `docker run` | Any shell-capable runner (GitLab CI, Argo, cron) | Call the command above in a script step. |
-| **GitHub Action** (provided) | GitHub Actions | `uses: ./.github/actions/compress-model` — see below. |
-| Jenkins shared-library step | Jenkins pipelines | Wrap the `docker run` in a `compressModel(job)` step (thin, on the roadmap). |
-| Airflow / Argo operator | You need DAG-native retries/XCom | Defer until a concrete need — the operator just shells to the same command. |
+| **Raw CLI / Bash** | Jenkins, Airflow `BashOperator`, local terminal | `python plugin/run_job.py --job job.yaml` |
+| **Docker** | Containerized pipelines | `docker run --rm -v $PWD:/work ...` |
+| **GitHub Action** | GitHub Actions workflows | `uses: ./.github/actions/compress-model` |
 
-Recommendation: **start with raw `docker run` or the GitHub Action.** Build a
-native Airflow/Argo operator only when a user actually needs DAG-level wiring —
-all of them ultimately call the identical `run_job.py` command, so there is no
-capability gained by building them early, only maintenance.
+## GitHub Actions
 
-## GitHub Actions (reference adapter)
+Use the reusable action in your workflow:
 
 ```yaml
-jobs:
-  compress:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - id: compress
-        uses: ./.github/actions/compress-model
-        with:
-          job: plugin/job.example.yaml
-          artifacts-dir: artifacts
-          # mlflow-tracking-uri: http://your-mlflow:5000   # optional
-      - run: echo "Gate passed: ${{ steps.compress.outputs.gate-passed }}"
+steps:
+  - uses: actions/checkout@v4
+  - name: Compress & Gate Model
+    uses: ./.github/actions/compress-model
+    with:
+      job-manifest: 'plugin/job.example.yaml'
 ```
 
-The action writes a **job summary table** (model, best variant, size Δ, latency Δ,
-gate) to the run, and fails the step on a gate failure so it blocks a merge/deploy
-like any other check. See [`.github/actions/compress-model/action.yml`](../.github/actions/compress-model/action.yml).
+## Airflow / Prefect / Dagster
 
-## Jenkins (pattern)
+In Airflow, call `run_job.py` via `BashOperator` or `DockerOperator`:
 
-```groovy
-stage('Compress') {
-  steps {
-    sh '''
-      docker run --rm -v "$WORKSPACE:/work" -w /work compression-pipeline:local \
-        python plugin/run_job.py --job job.yaml --artifacts-dir artifacts
-    '''
-    archiveArtifacts artifacts: 'artifacts/**/compression_report.json'
-  }
-}
+```python
+from airflow.operators.bash import BashOperator
+
+compress_task = BashOperator(
+    task_id="compress_model",
+    bash_command="python plugin/run_job.py --job /path/to/job.yaml --artifacts-dir /path/to/artifacts",
+)
 ```
-
-For a human approval gate *inside* Jenkins, wrap the promotion (not the
-compression) in an `input` step that calls
-[`registry/promote.py`](../registry/promote.py) `--run-id <id>` — the same
-declarative promote/rollback the self-serve UI uses.

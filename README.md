@@ -13,22 +13,22 @@ and produces a **"Plan"** — a report of the size / latency / accuracy deltas. 
 registers the winner in **MLflow** and lets you promote it to production or export it for the
 target device (server, GPU/Jetson, IoT, mobile).
 
-It exposes the same engine through **two front doors**:
+It exposes the same engine through **two entry gates**:
 
-- **Front Door A — orchestration plugin.** Jenkins / GitHub Actions / Airflow call one command
-  (`plugin/run_job.py`) or the hosted API to run compression as a pipeline stage.
-- **Front Door B — self-serve platform.** A REST API + React dashboard where a human submits a
+- **Gate A — Cloud & Self-Serve Platform.** A REST API + React dashboard where a human submits a
   model, reviews the Plan, and deploys on consent.
+- **Gate B — CLI & CI-CD Orchestration Plugin.** Jenkins / GitHub Actions / Airflow / CLI call one command
+  (`plugin/run_job.py`) or the hosted API to run compression as a pipeline stage.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph FDA["Front Door A — orchestration plugin"]
-      ORCH["Jenkins / GitHub Actions / Airflow"]
-    end
-    subgraph FDB["Front Door B — self-serve"]
+    subgraph GA["Gate A — Cloud & Self-Serve Platform"]
       UI["React dashboard"] --> API["FastAPI API"]
+    end
+    subgraph GB["Gate B — CLI & CI-CD Orchestration Plugin"]
+      ORCH["Jenkins / GitHub Actions / Airflow / CLI"]
     end
 
     ORCH -->|run_job.py / hosted API| CORE
@@ -39,7 +39,7 @@ flowchart TB
     subgraph CORE["Compression engine"]
       direction LR
       AD["adapters/<br/>xgboost · lightgbm · sklearn · pytorch"] --> ON["ONNX FP32"]
-      ON --> CP["compressors/<br/>onnx_int8 · trt_int8"]
+      ON --> CP["compressors/<br/>onnx_fp16 · onnx_int8 · trt_int8"]
       CP --> BM["benchmark → gate → report (the Plan)"]
     end
 
@@ -57,8 +57,8 @@ so the review queue and approval flow need no separate database.
 - [Background](#background)
 - [Install](#install)
 - [Usage](#usage)
-  - [Front Door A — plugin](#front-door-a--plugin)
-  - [Front Door B — self-serve](#front-door-b--self-serve)
+  - [Gate A — Cloud & Self-Serve](#gate-a--cloud--self-serve)
+  - [Gate B — CLI & CI-CD Plugin](#gate-b--cli--ci-cd-plugin)
 - [API](#api)
 - [Deploy](#deploy)
 - [Supported models & compression](#supported-models--compression)
@@ -103,24 +103,7 @@ A **job** is described by a manifest — `{ model, test_data, target_hardware, g
 [`plugin/job.schema.json`](plugin/job.schema.json) and [`plugin/job.example.yaml`](plugin/job.example.yaml).
 Only a **test set** is needed (no training data); features are auto-inferred from the test CSV.
 
-### Front Door A — plugin
-
-Run compression as a step in any orchestrator:
-
-```bash
-python plugin/run_job.py --job plugin/job.example.yaml --artifacts-dir artifacts
-# or containerized:
-docker run --rm -v "$PWD:/work" -w /work kompress:engine \
-    python plugin/run_job.py --job job.yaml --artifacts-dir artifacts
-```
-
-Output: `artifacts/<model>/compression_report.json` (the Plan) + the compressed variants; the exit
-code fails the step if the accuracy gate fails. Set `MLFLOW_TRACKING_URI` to log to your own MLflow,
-or leave it unset and the report file is the source of truth. A reusable GitHub Action is at
-[`.github/actions/compress-model`](.github/actions/compress-model); more in
-[`integrations/README.md`](integrations/README.md).
-
-### Front Door B — self-serve
+### Gate A — Cloud & Self-Serve
 
 Start the stack (`./run.sh`) and use the dashboard, or drive the API directly:
 
@@ -137,6 +120,23 @@ curl -X POST localhost:8000/runs -H 'content-type: application/json' -d '{
 
 Then watch it go `pending_gate → pending_approval` on the dashboard, review the Plan, and
 **Approve** to promote it to Production (or **Export** it for your device).
+
+### Gate B — CLI & CI-CD Plugin
+
+Run compression as a step in any CLI or CI/CD orchestrator:
+
+```bash
+python plugin/run_job.py --job plugin/job.example.yaml --artifacts-dir artifacts
+# or containerized:
+docker run --rm -v "$PWD:/work" -w /work kompress:engine \
+    python plugin/run_job.py --job job.yaml --artifacts-dir artifacts
+```
+
+Output: `artifacts/<model>/compression_report.json` (the Plan) + the compressed variants; the exit
+code fails the step if the accuracy gate fails. Set `MLFLOW_TRACKING_URI` to log to your own MLflow,
+or leave it unset and the report file is the source of truth. A reusable GitHub Action is at
+[`.github/actions/compress-model`](.github/actions/compress-model); more in
+[`integrations/README.md`](integrations/README.md).
 
 ## API
 
@@ -171,7 +171,7 @@ Postgres-backed MLflow. Scales to Kubernetes (one Job per compression + KEDA). S
 | Framework | Export | Compression |
 |---|---|---|
 | XGBoost / LightGBM / scikit-learn | ONNX (onnxmltools / skl2onnx) | ONNX INT8 dynamic ⭐ / static, TensorRT INT8 (GPU) |
-| PyTorch | ONNX (torch.onnx) | ONNX INT8 dynamic ⭐ / static, TensorRT INT8 (GPU) |
+| PyTorch | ONNX (torch.onnx) | ONNX FP16 ⭐ / ONNX INT8 dynamic ⭐ / static, TensorRT INT8 (GPU) |
 
 `target_hardware` drives both which compressors run and the export format:
 `cpu-generic → onnx` · `nvidia-gpu → tensorrt` · `arm-npu → tflite` · `sony-imx500 → onnx/MCT`.
@@ -184,18 +184,18 @@ with an NVIDIA GPU and falls back to ONNX otherwise.
 src/kompress/
 ├── engine/              Core Compression Engine
 │   ├── adapters/        framework → ONNX FP32
-│   ├── compressors/     compression techniques (ONNX INT8, TensorRT)
+│   ├── compressors/     compression techniques (ONNX FP16, ONNX INT8, TensorRT)
 │   ├── pipeline/        compress → benchmark → gate → report (the Plan)
 │   ├── export/          device export targets (onnx, tensorrt, tflite, coreml)
 │   ├── registry/        MLflow tracking state + promote/rollback
 │   └── common/          config, schemas, hardware targets, metrics
-├── services/            Platform Entrypoints & Front Doors
-│   ├── plugin/          Front Door A — Orchestration Plugin (run_job.py)
-│   └── cloud/           Front Door B — Self-Serve Platform Services
-│       ├── api/         FastAPI REST backend
-│       ├── worker/      Task queue & background worker
-│       ├── serve/       Model inference server
-│       └── web/         React dashboard UI
+├── services/            Platform Entrypoints & Gates
+│   ├── cloud/           Gate A — Cloud & Self-Serve Platform Services
+│   │   ├── api/         FastAPI REST backend
+│   │   ├── worker/      Task queue & background worker
+│   │   ├── serve/       Model inference server
+│   │   └── web/         React dashboard UI
+│   └── plugin/          Gate B — CLI & CI-CD Orchestration Plugin (run_job.py)
 └── tools/               Auxiliary scripts (baseline trainer, drift monitor, deployer)
 
 data/                    Sample datasets & generators
