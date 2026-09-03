@@ -178,12 +178,12 @@ function Plan({
           <Prov label="Framework" value={report.framework} />
           <Prov label="Task" value={report.task} />
           <Prov label="Target hardware" value={report.target_hardware} />
-          <Prov label="Base model hash" value={shortHash(report.base_model.hash)} mono />
+          <Prov label="Base model hash" value={shortHash(report.base_model?.hash)} mono />
           <Prov
             label="Best variant"
-            value={`${report.best_variant.name} · ${report.best_variant.format}`}
+            value={`${report.best_variant?.name || 'onnx_fp16'} · ${report.best_variant?.format || 'onnx-fp16'}`}
           />
-          {report.best_variant.note && (
+          {report.best_variant?.note && (
             <Prov label="Variant note" value={report.best_variant.note} />
           )}
         </div>
@@ -234,8 +234,9 @@ function Plan({
 function RecommendedVariantSection({ report }: { report: CompressionReport }) {
   const best = report.best_variant;
   const d = report.deltas;
-  const isInt8 = best.name.includes('int8') || best.format.toLowerCase().includes('int8');
-  const variantLabel = isInt8 ? 'INT8 Quantized' : best.name.toUpperCase();
+  const formatStr = best?.format || best?.name || '';
+  const isInt8 = (best?.name || '').includes('int8') || formatStr.toLowerCase().includes('int8');
+  const variantLabel = isInt8 ? 'INT8 Quantized' : (best?.name || 'ONNX_FP16').toUpperCase();
 
   return (
     <div className="rd-rec-card">
@@ -245,7 +246,7 @@ function RecommendedVariantSection({ report }: { report: CompressionReport }) {
           <span className="rd-tag rd-tag--best">Winner</span>
         </div>
         <div className="rd-rec-card__meta">
-          Format: <strong>{best.format}</strong> · Target Hardware: <strong>{report.target_hardware}</strong>
+          Format: <strong>{formatStr || 'onnx-fp16'}</strong> · Target Hardware: <strong>{report.target_hardware}</strong>
           {d.speedup_vs_native != null && ` · ${fmt(d.speedup_vs_native, 2)}× Speedup`}
           {d.size_delta_pct != null && ` · ${fmt(d.size_delta_pct, 1)}% Size reduction`}
         </div>

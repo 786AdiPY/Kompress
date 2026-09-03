@@ -43,8 +43,16 @@ class OnnxInt8Dynamic(Compressor):
                 fp32_onnx_path, out_path, weight_type=QuantType.QInt8,
             )
         except Exception as e:
-            print(f"[{self.name}] dynamic quantization failed ({e}); skipping.")
-            return None
+            try:
+                import onnx
+                model = onnx.load(fp32_onnx_path)
+                model.graph.ClearField("value_info")
+                clean_path = os.path.join(out_dir, "model_fp32_clean.onnx")
+                onnx.save(model, clean_path)
+                quantize_dynamic(clean_path, out_path, weight_type=QuantType.QInt8)
+            except Exception as inner_e:
+                print(f"[{self.name}] dynamic quantization failed ({e} / {inner_e}); skipping.")
+                return None
 
         print(f"[{self.name}] INT8 ONNX saved -> {out_path} "
               f"({Variant.size_of(out_path):.1f} KB)")
