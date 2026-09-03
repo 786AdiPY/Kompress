@@ -63,8 +63,6 @@ so the review queue and approval flow need no separate database.
 - [Deploy](#deploy)
 - [Supported models & compression](#supported-models--compression)
 - [Repository layout](#repository-layout)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Background
 
@@ -202,16 +200,3 @@ data/                    Sample datasets & generators
 deploy/                  OSS docker-compose stack & deployment configs
 tests/                   Platform CI smoke tests
 ```
-
-## Contributing
-
-- **Add a framework:** implement a `ModelAdapter` in `src/kompress/engine/adapters/` and register it.
-- **Add a compression technique:** implement a `Compressor` in `src/kompress/engine/compressors/` and list it.
-- **Add an export target / queue backend:** drop a module into `src/kompress/engine/export/` or `src/kompress/services/cloud/worker/queue.py`.
-
-Platform CI (`.github/workflows/ci.yml`) runs a smoke test of the engine + the web build on every push.
-
-## License
-
-Apache-2.0. The compression engine and dependencies are open source; TensorRT (NVIDIA, optional)
-is the only proprietary component and the pipeline falls back to ONNX INT8 without it.
