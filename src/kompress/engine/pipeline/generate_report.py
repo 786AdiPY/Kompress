@@ -58,9 +58,11 @@ def _passing_variants(gate: dict) -> set:
 
 
 def _pick_best(results: list, native: dict, passing: set) -> dict | None:
-    """Best = smallest gate-passing COMPRESSED variant, tie-broken by lowest
-    latency. Compression's headline is size; latency is surfaced as a delta so a
-    reviewer sees the trade honestly. Returns None if nothing compressed passed."""
+    """Best = smallest gate-passing COMPRESSED variant that does not severely
+    regress latency (speedup_vs_native >= 0.9), tie-broken by lowest latency.
+    If all compressed variants suffer CPU emulation latency slowdown, selects
+    the variant with lowest latency.
+    """
     compressed = [
         r for r in results
         if r is not native and r.get("kind") != "native"
@@ -68,7 +70,12 @@ def _pick_best(results: list, native: dict, passing: set) -> dict | None:
     ]
     if not compressed:
         return None
-    return min(compressed, key=lambda r: (r.get("model_size_kb", 0.0), r["latency_ms"]))
+
+    non_regressed = [r for r in compressed if r.get("speedup_vs_native", 1.0) >= 0.9]
+    if non_regressed:
+        return min(non_regressed, key=lambda r: (r.get("model_size_kb", 0.0), r["latency_ms"]))
+
+    return min(compressed, key=lambda r: r["latency_ms"])
 
 
 def _delta(best: dict, native: dict, key: str):
