@@ -11,9 +11,12 @@ project: compression-demo
 
 # ── Global defaults (any model may override these) ───────────────────────────
 compression:
-  # onnx_fp32 (baseline) | onnx_int8_dynamic ⭐ | onnx_int8_static | trt_int8 (GPU)
+  # onnx_fp32 (baseline) | onnx_fp16 | onnx_fp16_mixed | onnx_fp16_adaptive | onnx_int8_dynamic ⭐ | onnx_int8_static | trt_int8 (GPU)
   methods:
     - onnx_fp32
+    - onnx_fp16
+    - onnx_fp16_mixed
+    - onnx_fp16_adaptive
     - onnx_int8_dynamic
     - onnx_int8_static
     - trt_int8
