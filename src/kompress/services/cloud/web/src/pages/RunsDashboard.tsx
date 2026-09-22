@@ -18,8 +18,8 @@ import './RunsDashboard.css';
 // Filter tabs. `undefined` value => the "All" tab (no ?status= filter).
 const TABS: { label: string; value?: RunStatus }[] = [
   { label: 'All' },
-  { label: 'Pending Gate', value: 'pending_gate' },
-  { label: 'Pending Approval', value: 'pending_approval' },
+  { label: 'In Progress', value: 'pending_gate' },
+  { label: 'Succeeded', value: 'pending_approval' },
   { label: 'Approved', value: 'approved' },
   { label: 'Rejected', value: 'rejected' },
   { label: 'Failed', value: 'failed' },
@@ -29,7 +29,7 @@ export default function RunsDashboard() {
   const [status, setStatus] = useState<RunStatus | undefined>(undefined);
   const navigate = useNavigate();
 
-  const { data, isLoading, isError, error, isFetching } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['runs', status],
     queryFn: () => listRuns(status),
     refetchInterval: 4000, // live-update the review queue
@@ -79,15 +79,6 @@ export default function RunsDashboard() {
           <RunsTable runs={runs} onOpen={(id) => navigate(`/runs/${id}`)} />
         )}
 
-        {!isLoading && !isError && (
-          <p className="live-note muted" aria-live="polite">
-            <span
-              className={isFetching ? 'live-dot live-dot--active' : 'live-dot'}
-              aria-hidden="true"
-            />
-            {isFetching ? 'Refreshing…' : 'Live — refreshes every few seconds'}
-          </p>
-        )}
       </div>
     </div>
   );
@@ -113,7 +104,6 @@ function RunsTable({
             <th>Size Δ</th>
             <th>Latency Δ</th>
             <th>Status</th>
-            <th>Submitted</th>
           </tr>
         </thead>
         <tbody>
@@ -146,7 +136,6 @@ function RunsTable({
               <td>
                 <StatusChip status={run.status} />
               </td>
-              <td className="muted">{formatTime(run.start_time)}</td>
             </tr>
           ))}
         </tbody>
@@ -195,17 +184,4 @@ function dash(value: string | null | undefined): string {
 
 function shortId(runId: string): string {
   return runId.length > 10 ? runId.slice(0, 10) : runId;
-}
-
-/** start_time is an epoch-milliseconds timestamp (nullable). */
-function formatTime(ms: number | null): string {
-  if (ms == null) return '—';
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
