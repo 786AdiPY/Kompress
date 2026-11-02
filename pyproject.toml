@@ -30,9 +30,12 @@ dependencies = [
     "supabase>=2.9.0",
     "huggingface_hub>=0.23.0",
     "xgboost>=2.0.3",
+    "rich>=13.0.0",
 ]
 
 [project.scripts]
+kompress = "kompress.cli.main:main"
+kompress-cli = "kompress.cli.main:main"
 kompress-job = "kompress.services.plugin.run_job:main"
 kompress-api = "kompress.services.cloud.api.app:main"
 kompress-worker = "kompress.services.cloud.worker.worker:main"

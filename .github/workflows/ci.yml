@@ -37,7 +37,7 @@ jobs:
           node-version: "20"
       - name: Install web dependencies
         run: npm ci
-        working-directory: web
+        working-directory: src/kompress/services/cloud/web
       - name: Build dashboard (tsc + vite)
         run: npm run build
-        working-directory: web
+        working-directory: src/kompress/services/cloud/web

@@ -130,6 +130,21 @@ docker run --rm -v "$PWD:/work" -w /work kompress:engine \
     python plugin/run_job.py --job job.yaml --artifacts-dir artifacts
 ```
 
+#### Terminal UI & CLI Utilities
+
+Kompress provides an interactive terminal UI and diagnostic CLI:
+
+```bash
+kompress                 # launch interactive Kompress CLI UI
+# or:
+python -m kompress       # run CLI via module
+
+kompress targets         # list hardware deployment targets & compression mappings
+kompress check           # run platform health and dependency diagnostics
+kompress test            # run platform CI smoke test
+kompress info            # view detected accelerators, storage & queue environment
+```
+
 Output: `artifacts/<model>/compression_report.json` (the Plan) + the compressed variants; the exit
 code fails the step if the accuracy gate fails. Set `MLFLOW_TRACKING_URI` to log to your own MLflow,
 or leave it unset and the report file is the source of truth. A reusable GitHub Action is at
