@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test", help="Run platform smoke test")
 
     # kompress run <manifest>
-    run_parser = subparsers.add_parser("run", help="Run a Gate B model compression job manifest")
+    run_parser = subparsers.add_parser("run", help="Run a model compression job manifest")
     run_parser.add_argument(
         "--job", "-j",
         required=True,

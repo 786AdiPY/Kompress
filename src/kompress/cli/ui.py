@@ -95,35 +95,35 @@ def render_ui(interactive: bool | None = None) -> None:
             box=ROUNDED,
         )
 
-        # Entry Gates Panel
-        gates_table = Table(show_header=False, box=None, padding=(0, 1))
-        gates_table.add_column("Gate", style="bold magenta")
-        gates_table.add_column("Description", style="white")
+        # Available Operations Panel
+        ops_table = Table(show_header=False, box=None, padding=(0, 1))
+        ops_table.add_column("Operation", style=f"bold {TURQUOISE}")
+        ops_table.add_column("Details", style="white")
 
-        gates_table.add_row(
-            "Gate A: Cloud & Self-Serve",
-            "REST API (:8000) + React Dashboard (:5173)\n"
-            "[dim]Review Plan deltas, approve & deploy on consent[/dim]",
+        ops_table.add_row(
+            "Model Compression",
+            "Quantize & compress models across frameworks\n"
+            "[dim]FP16, INT8 Dynamic, INT8 Static Calibration, TensorRT[/dim]",
         )
-        gates_table.add_row(
-            "Gate B: CLI & CI/CD Plugin",
-            "Single-command manifest runner ('kompress-job')\n"
-            "[dim]Automates compress → benchmark → gate in pipelines[/dim]",
+        ops_table.add_row(
+            "Hardware Benchmarking",
+            "Measure latency (ms), size reduction & speedup\n"
+            "[dim]Evaluates native vs compressed variants on target device[/dim]",
         )
-        gates_table.add_row(
-            "Core Engine",
-            "Adapters (XGBoost, sklearn, PyTorch) → ONNX\n"
-            "[dim]Pluggable compressors, latency/size gating & device export[/dim]",
+        ops_table.add_row(
+            "Device Export",
+            "Produce deployable runtime formats\n"
+            "[dim]ONNX Runtime (CPU/Edge), TensorRT (GPU), TFLite (ARM), CoreML[/dim]",
         )
 
-        gates_panel = Panel(
-            gates_table,
-            title="[bold bright_magenta]Architecture & Entry Gates[/bold bright_magenta]",
-            border_style="magenta",
+        ops_panel = Panel(
+            ops_table,
+            title=f"[bold {TURQUOISE}]Available Operations[/bold {TURQUOISE}]",
+            border_style=TURQUOISE,
             box=ROUNDED,
         )
 
-        console.print(Columns([sys_panel, gates_panel], expand=True))
+        console.print(Columns([sys_panel, ops_panel], expand=True))
 
         # Hardware targets summary
         print_hardware_table(console)
@@ -194,34 +194,31 @@ def print_quick_commands(console: Any) -> None:
     from rich.panel import Panel
 
     commands_md = (
-        f"[bold {TURQUOISE}]Quick CLI Commands:[/bold {TURQUOISE}]\n"
-        "  • [yellow]kompress[/yellow]                     Open this interactive CLI UI\n"
-        "  • [yellow]kompress check[/yellow]               Run platform diagnostics & health check\n"
-        "  • [yellow]kompress targets[/yellow]             List supported hardware targets & compressors\n"
+        f"[bold {TURQUOISE}]Available CLI Operations:[/bold {TURQUOISE}]\n"
+        "  • [yellow]kompress[/yellow]                     Open interactive CLI dashboard\n"
+        "  • [yellow]kompress run --job <job.yaml>[/yellow] Execute a model compression job manifest\n"
+        "  • [yellow]kompress targets[/yellow]             List supported hardware deployment targets & compressors\n"
+        "  • [yellow]kompress check[/yellow]               Run platform diagnostics & health checks\n"
         "  • [yellow]kompress test[/yellow]                Run platform smoke verification test\n"
-        "  • [yellow]kompress run <job.yaml>[/yellow]     Execute a Gate B compression job manifest\n"
-        "  • [yellow]kompress-api[/yellow]                 Start Gate A REST API backend (:8000)\n"
-        "  • [yellow]kompress-worker[/yellow]              Start background queue worker\n"
+        "  • [yellow]kompress info[/yellow]                Inspect compute acceleration & environment\n"
     )
-    console.print(Panel(commands_md, border_style="dim", title="CLI Quick Reference"))
+    console.print(Panel(commands_md, border_style=TURQUOISE, title="Operations Reference"))
 
 
 def run_interactive_loop(console: Any) -> None:
     """Prompt user for interactive CLI menu actions."""
     from rich.prompt import Prompt
-    from rich.panel import Panel
 
     while True:
-        console.print("\n[bold bright_white]Select an Action:[/bold bright_white]")
+        console.print("\n[bold bright_white]Select an Operation:[/bold bright_white]")
         console.print(f"  [bold {TURQUOISE}]1[/bold {TURQUOISE}]) Run Platform Diagnostics & Health Check")
-        console.print(f"  [bold {TURQUOISE}]2[/bold {TURQUOISE}]) View Hardware Targets & Device Exporters")
+        console.print(f"  [bold {TURQUOISE}]2[/bold {TURQUOISE}]) View Hardware Deployment Targets & Operations")
         console.print(f"  [bold {TURQUOISE}]3[/bold {TURQUOISE}]) Run Platform Smoke Test")
-        console.print(f"  [bold {TURQUOISE}]4[/bold {TURQUOISE}]) Gate B Quickstart & Example Manifest")
-        console.print(f"  [bold {TURQUOISE}]5[/bold {TURQUOISE}]) Gate A Cloud Stack & Service Launch Info")
-        console.print(f"  [bold {TURQUOISE}]6[/bold {TURQUOISE}]) Refresh Dashboard View")
+        console.print(f"  [bold {TURQUOISE}]4[/bold {TURQUOISE}]) View Compression Job Manifest Guide (job.yaml)")
+        console.print(f"  [bold {TURQUOISE}]5[/bold {TURQUOISE}]) Refresh Dashboard View")
         console.print("  [bold red]q[/bold red]) Quit\n")
 
-        choice = Prompt.ask(f"[bold {TURQUOISE}]Kompress[/bold {TURQUOISE}]", choices=["1", "2", "3", "4", "5", "6", "q"], default="q")
+        choice = Prompt.ask(f"[bold {TURQUOISE}]Kompress[/bold {TURQUOISE}]", choices=["1", "2", "3", "4", "5", "q"], default="q")
 
         if choice == "q":
             console.print("[dim]Exiting Kompress CLI. Happy compressing![/dim]\n")
@@ -233,10 +230,8 @@ def run_interactive_loop(console: Any) -> None:
         elif choice == "3":
             run_smoke_test(console)
         elif choice == "4":
-            show_gate_b_guide(console)
+            show_manifest_guide(console)
         elif choice == "5":
-            show_gate_a_guide(console)
-        elif choice == "6":
             console.clear()
             console.print(render_rich_banner(VERSION))
             sys_info = get_system_info()
@@ -246,7 +241,6 @@ def run_interactive_loop(console: Any) -> None:
 def run_diagnostics(console: Any) -> bool:
     """Run diagnostics check on platform modules and schemas."""
     from rich.table import Table
-    from rich.panel import Panel
 
     table = Table(title="Kompress Diagnostics & Health Check", title_style=f"bold {TURQUOISE}", border_style=TURQUOISE)
     table.add_column("Component", style="bold white")
@@ -260,7 +254,7 @@ def run_diagnostics(console: Any) -> bool:
         ("Engine Compressors", "kompress.engine.compressors", "Pluggable quantization & FP16 engines"),
         ("Export Targets", "kompress.engine.export", "Hardware deployable formats (ONNX, TRT, TFLite, CoreML)"),
         ("Registry & State", "kompress.engine.registry", "MLflow tag states & model version promotion"),
-        ("Cloud Services", "kompress.services.cloud.api", "FastAPI Gate A REST API backend"),
+        ("REST Services", "kompress.services.cloud.api", "FastAPI REST API backend"),
     ]
 
     for name, module_path, desc in checks:
@@ -304,16 +298,16 @@ def run_smoke_test(console: Any) -> None:
         console.print(Panel(f"[bold red]✗ SMOKE TEST FAILED (exit code {res.returncode})[/bold red]\n{res.stderr or res.stdout}", border_style="red"))
 
 
-def show_gate_b_guide(console: Any) -> None:
-    """Display Gate B manifest guide."""
+def show_manifest_guide(console: Any) -> None:
+    """Display model compression job manifest guide."""
     from rich.syntax import Syntax
     from rich.panel import Panel
 
-    manifest_example = """# job.yaml — Kompress Gate B single-model manifest
+    manifest_example = """# job.yaml — Kompress model compression job manifest
 model:
   name: "churn-classifier"
   ref: "artifacts/models/churn.pkl"      # local path or object store pointer
-  framework: "xgboost"
+  framework: "xgboost"                   # xgboost | sklearn | pytorch | lightgbm
   task: "binary_classification"
   target: "churn"
 
@@ -327,25 +321,8 @@ gate:
   max_drop_pct: 2.0                       # fail gate if metric drops > 2%
 """
     syntax = Syntax(manifest_example, "yaml", theme="monokai", line_numbers=True)
-    console.print(Panel(syntax, title="Sample Gate B Manifest (job.yaml)", border_style="cyan"))
-    console.print("[bold]Run with:[/bold] [yellow]kompress-job --job job.yaml --artifacts-dir artifacts[/yellow]\n")
-
-
-def show_gate_a_guide(console: Any) -> None:
-    """Display Gate A cloud platform guide."""
-    from rich.panel import Panel
-
-    msg = (
-        "[bold cyan]Gate A: Cloud & Self-Serve Platform[/bold cyan]\n\n"
-        "1. [bold]Start the Full Stack[/bold]:\n"
-        "   [yellow]./run.sh[/yellow]                      # Starts MLflow + API + Worker + React Dashboard\n"
-        "   [yellow]docker compose -f deploy/docker-compose.oss.yml up --build[/yellow] # Full OSS container stack\n\n"
-        "2. [bold]Web Dashboard[/bold]:\n"
-        "   Access the React UI at: [bold link=http://localhost:5173]http://localhost:5173[/bold link]\n\n"
-        "3. [bold]REST API Docs[/bold]:\n"
-        "   Interactive Swagger documentation: [bold link=http://localhost:8000/docs]http://localhost:8000/docs[/bold link]\n"
-    )
-    console.print(Panel(msg, title="Gate A Service Information", border_style="magenta"))
+    console.print(Panel(syntax, title="Sample Model Compression Manifest (job.yaml)", border_style=TURQUOISE))
+    console.print("[bold]Run with:[/bold] [yellow]kompress run --job job.yaml --artifacts-dir artifacts[/yellow]\n")
 
 
 def render_plain_ui() -> None:
@@ -355,9 +332,10 @@ def render_plain_ui() -> None:
     print("\n--- Platform & Environment ---")
     for k, v in info.items():
         print(f"  {k:15}: {v}")
-    print("\n--- Available Commands ---")
-    print("  kompress                     Run CLI UI")
+    print("\n--- Available Operations ---")
+    print("  kompress                     Run interactive CLI dashboard")
+    print("  kompress run --job <file>    Execute model compression job")
+    print("  kompress targets             List hardware deployment targets")
     print("  kompress check               Run platform health checks")
-    print("  kompress targets             List hardware targets")
-    print("  kompress-job                 Gate B compression job runner")
-    print("  kompress-api                 Gate A REST API backend")
+    print("  kompress test                Run platform smoke test")
+    print("  kompress info                Inspect compute acceleration")
