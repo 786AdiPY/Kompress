@@ -12,7 +12,7 @@ KOMPRESS_ASCII = r"""    __ __
 
 TITLE = "KOMPRESS"
 TAGLINE = "Model Compression & Hardware Optimization Platform"
-SUBTITLE = "Gate A (Cloud & Self-Serve) • Gate B (CLI & CI/CD Orchestration)"
+SUBTITLE = "Automated Model Compression, Hardware Benchmarking & Device Export"
 
 # Turquoise color palette matching #43deca
 TURQUOISE = "#43deca"
