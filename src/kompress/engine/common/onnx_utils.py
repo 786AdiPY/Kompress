@@ -17,18 +17,38 @@ def make_session(onnx_path: str):
 
 
 def run(sess, X: np.ndarray):
-    inp_meta = sess.get_inputs()[0]
-    expected_shape = inp_meta.shape
-    arr = np.asarray(X, dtype=np.float32)
+    inputs = sess.get_inputs()
+    feed = {}
+    for inp_meta in inputs:
+        expected_type = str(inp_meta.type or "tensor(float)")
+        if "int64" in expected_type:
+            dtype = np.int64
+        elif "int32" in expected_type:
+            dtype = np.int32
+        else:
+            dtype = np.float32
 
-    if len(expected_shape) == 4 and arr.ndim == 2:
-        b = arr.shape[0]
-        c = expected_shape[1] if isinstance(expected_shape[1], int) else 3
-        h = expected_shape[2] if isinstance(expected_shape[2], int) else 224
-        w = expected_shape[3] if isinstance(expected_shape[3], int) else 224
-        arr = np.zeros((b, c, h, w), dtype=np.float32)
+        arr = np.asarray(X, dtype=dtype)
+        expected_shape = inp_meta.shape
 
-    return sess.run(None, {inp_meta.name: arr})
+        if len(expected_shape) == 4 and arr.ndim == 2:
+            b = arr.shape[0]
+            c = expected_shape[1] if isinstance(expected_shape[1], int) else 3
+            h = expected_shape[2] if isinstance(expected_shape[2], int) else 224
+            w = expected_shape[3] if isinstance(expected_shape[3], int) else 224
+            arr = np.zeros((b, c, h, w), dtype=dtype)
+        elif len(expected_shape) == 2 and arr.ndim == 2:
+            req_dim1 = expected_shape[1]
+            if isinstance(req_dim1, int) and req_dim1 != arr.shape[1]:
+                b = arr.shape[0]
+                new_arr = np.zeros((b, req_dim1), dtype=dtype)
+                col_copy = min(arr.shape[1], req_dim1)
+                new_arr[:, :col_copy] = arr[:, :col_copy]
+                arr = new_arr
+
+        feed[inp_meta.name] = arr
+
+    return sess.run(None, feed)
 
 
 def extract_proba(outputs, task: str = "binary_classification") -> np.ndarray:

@@ -32,6 +32,9 @@ artifacts/*.json
 artifacts/*.yaml
 artifacts/model.pkl
 artifacts/model_fp32.onnx
+artifacts/bert*/
+artifacts/llama*/
+artifacts/uploads/
 
 # ── Node / web (also covered by web/.gitignore) ─────────────────────────────
 node_modules/

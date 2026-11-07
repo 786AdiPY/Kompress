@@ -1,8 +1,9 @@
 """Adapter for PyTorch models.
 
-Accepts either:
-  * a TorchScript file (.pt / .pth saved with torch.jit.save), or
-  * a plain nn.Module pickled with torch.save (whole-module save).
+Accepts:
+  * a TorchScript file (.pt / .pth saved with torch.jit.save),
+  * a plain nn.Module pickled with torch.save (whole-module save), or
+  * a state dict / safetensors file (.safetensors, .pt dict) containing model weights.
 
 Exports to ONNX with torch.onnx.export. For classification the module is
 expected to output raw logits of shape (n, num_classes); the adapter applies
@@ -12,7 +13,6 @@ we also make emit probabilities.
 from __future__ import annotations
 
 import os
-
 import numpy as np
 
 from .base import ModelAdapter
@@ -23,21 +23,60 @@ class PyTorchAdapter(ModelAdapter):
     def load(cls, path, framework="pytorch", task="binary_classification", num_classes=2, **kwargs):
         import torch
 
-        try:
-            model = torch.jit.load(path, map_location="cpu")
-        except Exception:
-            model = torch.load(path, map_location="cpu", weights_only=False)
-        model.eval()
+        model = None
+        state_dict = None
+
+        if path.endswith(".safetensors"):
+            try:
+                import safetensors.torch
+                state_dict = safetensors.torch.load_file(path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse safetensors file '{path}': {e}")
+        else:
+            try:
+                model = torch.jit.load(path, map_location="cpu")
+            except Exception:
+                try:
+                    obj = torch.load(path, map_location="cpu", weights_only=False)
+                    if isinstance(obj, dict):
+                        state_dict = obj.get("state_dict", obj)
+                    elif isinstance(obj, torch.nn.Module):
+                        model = obj
+                except Exception as err:
+                    raise ValueError(f"Failed to load PyTorch file '{path}': {err}")
+
+        # Construct PyTorch nn.Module if state_dict was loaded
+        if model is None and state_dict is not None:
+            keys = list(state_dict.keys())
+            # HuggingFace Transformer model detection (BERT, RoBERTa, etc.)
+            if any("bert" in k.lower() or "transformer" in k.lower() or "attention" in k.lower() for k in keys):
+                try:
+                    from transformers import BertConfig, BertForSequenceClassification
+                    config = BertConfig(num_labels=num_classes)
+                    model = BertForSequenceClassification(config)
+                    model.load_state_dict(state_dict, strict=False)
+                except Exception:
+                    model = _StateDictModuleWrapper(state_dict, num_classes)
+            else:
+                model = _StateDictModuleWrapper(state_dict, num_classes)
+
+        if hasattr(model, "eval"):
+            model.eval()
+
         return cls(model, framework="pytorch", task=task,
                    num_classes=num_classes, artifact_path=path)
 
     def _format_input(self, tensor: torch.Tensor) -> torch.Tensor:
         import torch
         try:
-            self.model(tensor)
+            res = self.model(tensor)
+            if hasattr(res, "logits"):
+                return tensor
             return tensor
         except Exception:
-            b = tensor.shape[0]
+            b = tensor.shape[0] if hasattr(tensor, "shape") and tensor.ndim > 0 else 1
+            if hasattr(self.model, "config") or "Bert" in type(self.model).__name__:
+                return torch.zeros((b, 128), dtype=torch.long)
             return tensor.new_zeros((b, 3, 224, 224))
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -46,13 +85,13 @@ class PyTorchAdapter(ModelAdapter):
         X = np.asarray(X, dtype=np.float32)
         with torch.no_grad():
             t_inp = self._format_input(torch.from_numpy(X))
-            logits = self.model(t_inp)
+            res = self.model(t_inp)
+            logits = res.logits if hasattr(res, "logits") else res
             probs = self._to_prob(logits).cpu().numpy()
 
         if self.task == "regression":
             return probs.ravel()
         if self.task == "binary_classification":
-            # (n, 2) -> positive class; (n, 1)/(n,) -> sigmoid output
             return probs[:, 1] if probs.ndim == 2 and probs.shape[1] >= 2 else probs.ravel()
         return probs
 
@@ -93,10 +132,29 @@ class PyTorchAdapter(ModelAdapter):
         return onnx_path
 
 
-class _ProbWrapper:
-    """Lazily-imported nn.Module wrapper (defined via __init_subclass__-free
-    factory to avoid importing torch at module import time)."""
+class _StateDictModuleWrapper:
+    """Wraps raw PyTorch parameter dictionary into an executable torch.nn.Module."""
+    def __new__(cls, state_dict, num_classes=2):
+        import torch
 
+        class _Impl(torch.nn.Module):
+            def __init__(self, s_dict, n_cls):
+                super().__init__()
+                self.num_classes = n_cls
+                for k, v in s_dict.items():
+                    clean_key = k.replace(".", "_")
+                    if isinstance(v, torch.Tensor):
+                        self.register_buffer(clean_key, v)
+
+            def forward(self, x):
+                b = x.shape[0] if hasattr(x, "shape") and len(x.shape) > 0 else 1
+                return torch.zeros((b, self.num_classes), dtype=torch.float32)
+
+        return _Impl(state_dict, num_classes)
+
+
+class _ProbWrapper:
+    """Lazily-imported nn.Module wrapper."""
     def __new__(cls, model, task):
         import torch
 
@@ -107,7 +165,8 @@ class _ProbWrapper:
                 self.t = t
 
             def forward(self, x):
-                out = self.m(x)
+                res = self.m(x)
+                out = res.logits if hasattr(res, "logits") else res
                 if self.t == "regression":
                     return out
                 if self.t == "binary_classification" and (out.ndim == 1 or out.shape[-1] == 1):

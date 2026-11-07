@@ -33,7 +33,7 @@ import json
 import os
 import sys
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -58,6 +58,7 @@ from kompress.services.cloud.worker.executor import (                      # noq
     check_ref_policy, execute_job, registered_name,
 )
 from kompress.services.cloud.worker.queue import get_queue                          # noqa: E402
+from kompress.engine.recommendation.recommender import get_ai_recommendation    # noqa: E402
 from kompress.engine.common.limits import MAX_UPLOAD_BYTES, human_size       # noqa: E402
 
 # How submitted jobs run:
@@ -115,21 +116,25 @@ def _new_run(job: dict, model_name: str) -> str:
     return run_id
 
 
-def _run_dir_report(run_id: str, model_name: str | None = None) -> str:
+def _run_dir_report(run_id: str, model_name: str | None = None) -> str | None:
+    """Return the path to compression_report.json, or None if not generated yet."""
     base = os.path.join(RUNS_DIR, run_id, "artifacts")
     if model_name:
-        return os.path.join(base, model_name, "compression_report.json")
+        p = os.path.join(base, model_name, "compression_report.json")
+        return p if os.path.exists(p) else None
     for name in os.listdir(base) if os.path.isdir(base) else []:
         cand = os.path.join(base, name, "compression_report.json")
         if os.path.exists(cand):
             return cand
-    raise HTTPException(404, "No report for this run yet.")
+    return None
 
 
 def _run_onnx_path(run_id: str) -> str:
     """Resolve a completed run's best-variant ONNX to an absolute path — the input
     every export target converts from. Shared by /export."""
-    report_path = _run_dir_report(run_id)                 # 404s if no report yet
+    report_path = _run_dir_report(run_id)
+    if report_path is None:
+        raise HTTPException(404, "No report for this run yet.")
     model_dir = os.path.dirname(report_path)
     report = json.load(open(report_path))
     variants = json.load(open(os.path.join(model_dir, "variants.json"))).get("variants", [])
@@ -160,6 +165,30 @@ def health():
 @app.get("/hardware-targets")
 def hardware_targets():
     return {"targets": known_targets()}
+
+
+@app.post("/recommend")
+async def recommend_compression(
+    model_name: str | None = Form(None),
+    framework: str | None = Form(None),
+    target_hardware: str = Form("cpu-generic"),
+    context_text: str = Form(""),
+    context_file: UploadFile | None = File(None),
+):
+    context_bytes = None
+    context_filename = None
+    if context_file:
+        context_bytes = await context_file.read()
+        context_filename = context_file.filename
+
+    return get_ai_recommendation(
+        model_name=model_name,
+        framework=framework,
+        target_hardware=target_hardware,
+        context_text=context_text,
+        context_file_name=context_filename,
+        context_file_bytes=context_bytes,
+    )
 
 
 @app.post("/runs", status_code=202)
@@ -198,6 +227,14 @@ class _SizeLimitedReader:
         self._f = fileobj
         self._limit = limit
         self._seen = 0
+
+    def seek(self, offset: int = 0, whence: int = 0) -> int:
+        if hasattr(self._f, "seek"):
+            res = self._f.seek(offset, whence)
+            if offset == 0 and whence == 0:
+                self._seen = 0
+            return res
+        return 0
 
     def read(self, n: int = -1) -> bytes:
         chunk = self._f.read(n)
@@ -260,9 +297,82 @@ def get_run(run_id: str):
     return {"run_id": run_id, "status": status}
 
 
+def _run_dir_progress(run_id: str) -> dict:
+    """Inspect run directory to build a live progress payload if full report is not ready."""
+    run_dir = os.path.join(RUNS_DIR, run_id)
+    if not os.path.exists(run_dir):
+        return {}
+
+    job_file = os.path.join(run_dir, "job.json")
+    job = {}
+    if os.path.exists(job_file):
+        try:
+            with open(job_file) as f:
+                job = json.load(f)
+        except Exception:
+            pass
+
+    art_dir = os.path.join(run_dir, "artifacts")
+    variants = []
+    model_name = job.get("model", {}).get("name") or "model"
+    manifest_path = None
+    if os.path.exists(art_dir):
+        for name in os.listdir(art_dir):
+            mp = os.path.join(art_dir, name, "variants.json")
+            if os.path.exists(mp):
+                manifest_path = mp
+                model_name = name
+                break
+
+    if manifest_path and os.path.exists(manifest_path):
+        try:
+            with open(manifest_path) as f:
+                mdata = json.load(f)
+            variants = mdata.get("variants", [])
+        except Exception:
+            pass
+
+    status = mlflow_state.get_status(run_id, tracking_uri=TRACKING_URI) or "pending_gate"
+
+    stage = 1
+    stage_name = "Model & Data Ingestion"
+    if variants:
+        stage = 2
+        stage_name = "Graph Transformation & Quantization"
+        if any("latency_ms" in v for v in variants):
+            stage = 3
+            stage_name = "Latency & Speedup Benchmarking"
+
+    return {
+        "status": status,
+        "is_partial": True,
+        "stage": stage,
+        "stage_name": stage_name,
+        "model_name": model_name,
+        "target_hardware": job.get("target_hardware", "cpu-generic"),
+        "variants_done": [v.get("name") for v in variants if v.get("name")],
+    }
+
+
 @app.get("/runs/{run_id}/report")
 def get_report(run_id: str):
-    return json.load(open(_run_dir_report(run_id)))
+    path = _run_dir_report(run_id)
+    if path is None:
+        status = mlflow_state.get_status(run_id, tracking_uri=TRACKING_URI)
+        if status == mlflow_state.FAILED:
+            raise HTTPException(422, "This compression run failed before generating a report.")
+        from fastapi.responses import JSONResponse
+        progress = _run_dir_progress(run_id)
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "pending",
+                "message": "Compression in progress, report not ready yet.",
+                "run_status": status or "pending_gate",
+                **progress,
+            },
+        )
+    return json.load(open(path))
 
 
 @app.get("/runs/{run_id}/artifact")

@@ -18,7 +18,16 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _get_repo_root():
+    cur = os.path.abspath(__file__)
+    while os.path.dirname(cur) != cur:
+        if os.path.exists(os.path.join(cur, "pyproject.toml")) or os.path.exists(os.path.join(cur, "pipeline.yaml")):
+            return cur
+        cur = os.path.dirname(cur)
+    # Fallback: 6 levels up from worker/queue.py -> project root
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
+
+REPO_ROOT = _get_repo_root()
 
 
 class QueueBackend(ABC):

@@ -6,6 +6,7 @@
 // result, and the Approve / Reject / Download actions. The report may 404 while
 // the run is still executing (status pending_gate); we poll getRun until it
 // exists and render a friendly waiting state in the meantime.
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -18,7 +19,7 @@ import {
   getRun,
   rejectRun,
 } from '../api/client';
-import type { CompressionReport, ExportFormat, VariantResult } from '../api/types';
+import type { CompressionReport, ExportFormat, ProgressReport, VariantResult } from '../api/types';
 
 import DeltaStat from '../components/DeltaStat';
 import ErrorState from '../components/ErrorState';
@@ -29,31 +30,122 @@ import './RunDetail.css';
 
 const POLL_MS = 2500;
 
+function CompressionProgress({ progress }: { progress?: ProgressReport }) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed((prev) => prev + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const activeStage = progress?.stage ?? 1;
+  const activeStageName = progress?.stage_name || 'Queued — waiting for compression worker...';
+  const variantsDone = progress?.variants_done || [];
+
+  const candidates = [
+    { key: 'onnx_fp32', name: 'ONNX FP32', desc: 'Baseline FP32 Graph Export', tag: 'Baseline' },
+    { key: 'onnx_int8_dynamic', name: 'ONNX INT8 Dynamic', desc: 'Quantized Weights & Dynamic Activations', tag: 'Recommended' },
+    { key: 'onnx_int8_static', name: 'ONNX INT8 Static', desc: 'Calibration-Guided INT8 Quantization', tag: 'Fast' },
+    { key: 'trt_int8', name: 'TensorRT INT8', desc: 'GPU Optimized Execution Engine', tag: 'High-Perf' },
+  ];
+
+  const steps = [
+    { title: 'Model & Data Ingestion', done: activeStage > 1, active: activeStage === 1 },
+    { title: 'Graph Transformation & Quantization', done: activeStage > 2, active: activeStage === 2 },
+    { title: 'Latency & Speedup Benchmarking', done: activeStage > 3, active: activeStage === 3 },
+    { title: 'Quality Gate & Accuracy Check', done: activeStage > 4, active: activeStage === 4 },
+  ];
+
+  const isStalled = elapsed > 45 && !progress?.stage;
+
+  return (
+    <div className="rd-loader-card">
+      <div className="rd-loader-head">
+        <div className="rd-loader-spinner" />
+        <div>
+          <h2 className="rd-loader-title">
+            {isStalled ? 'Compression Job Stalled / Queued' : 'Compression Pipeline In Progress'}
+          </h2>
+          <p className="rd-loader-subtitle">
+            {isStalled
+              ? `Job has been waiting for ${elapsed}s. Check if background worker is active or retry the run.`
+              : `${activeStageName} (${elapsed}s elapsed)`}
+          </p>
+        </div>
+      </div>
+
+      <div className="rd-steps-container">
+        {steps.map((step, idx) => (
+          <div
+            key={idx}
+            className={`rd-step-item ${
+              step.done
+                ? 'rd-step-item--done'
+                : step.active
+                ? 'rd-step-item--active'
+                : ''
+            }`}
+          >
+            <span className="rd-step-badge">{step.done ? '✓' : idx + 1}</span>
+            <span className="rd-step-title">{step.title}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="rd-candidates-section">
+        <h4 className="rd-section-title">Compression Candidates Under Evaluation</h4>
+        <div className="rd-candidates-grid">
+          {candidates.map((c, i) => {
+            const isDone = variantsDone.some((v) =>
+              v.toLowerCase().includes(c.key.split('_')[1] || c.key),
+            );
+            return (
+              <div key={i} className={`rd-candidate-card ${isDone ? 'rd-candidate-card--done' : ''}`}>
+                <div className="rd-candidate-head">
+                  <span className="rd-candidate-name">{c.name}</span>
+                  <span className="rd-candidate-tag">{isDone ? '✓ Completed' : c.tag}</span>
+                </div>
+                <p className="rd-candidate-desc">{c.desc}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>();
   const qc = useQueryClient();
 
-  // Status of the run. Poll while the compression job is still running.
+  // Status of the run. Poll until terminal status reached.
   const runQuery = useQuery({
     queryKey: ['run', runId],
     queryFn: () => getRun(runId as string),
     enabled: !!runId,
-    refetchInterval: (query) =>
-      query.state.data?.status === 'pending_gate' ? POLL_MS : false,
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      if (s === 'pending_approval' || s === 'approved' || s === 'rejected' || s === 'failed') return false;
+      return POLL_MS;
+    },
   });
 
   const status = runQuery.data?.status;
 
-  // The report ("Plan"). 404s until the job has produced it; keep polling while
-  // the run is still in the gate stage, then stop once we have it.
+  // The report ("Plan"). Keep polling while in progress or fetching partial progress.
   const reportQuery = useQuery({
     queryKey: ['report', runId],
     queryFn: () => getReport(runId as string),
     enabled: !!runId,
     retry: false,
     refetchInterval: (query) => {
-      if (query.state.data) return false;
-      return status === 'pending_gate' || status === undefined ? POLL_MS : false;
+      const data = query.state.data;
+      // Got full report (not partial) — stop polling
+      if (data && !('is_partial' in data) && 'best_variant' in data && data.best_variant) return false;
+      // Terminal failures will never produce a report — stop polling
+      if (status === 'failed' || status === 'rejected') return false;
+      return POLL_MS;
     },
   });
 
@@ -76,6 +168,17 @@ export default function RunDetail() {
     return <ErrorState error="No run id in the URL." title="Invalid run" />;
   }
 
+  const isFullReport =
+    reportQuery.data != null &&
+    !('is_partial' in reportQuery.data) &&
+    'best_variant' in reportQuery.data &&
+    reportQuery.data.best_variant != null;
+
+  const progressData =
+    reportQuery.data && 'is_partial' in reportQuery.data
+      ? (reportQuery.data as ProgressReport)
+      : undefined;
+
   return (
     <div>
       <div className="rd-head">
@@ -93,9 +196,9 @@ export default function RunDetail() {
         <Loading label="Loading run…" />
       ) : runQuery.isError ? (
         <ErrorState error={runQuery.error} title="Could not load this run" />
-      ) : reportQuery.data ? (
+      ) : isFullReport ? (
         <Plan
-          report={reportQuery.data}
+          report={reportQuery.data as CompressionReport}
           runId={runId}
           status={status}
           approve={approve}
@@ -110,12 +213,10 @@ export default function RunDetail() {
         <div className="card muted">
           This run was rejected and has no compression report.
         </div>
-      ) : status === 'pending_gate' || status === undefined || reportQuery.isFetching ? (
-        <div className="card">
-          <Loading label="Compression in progress — the plan is not ready yet. Polling…" />
-        </div>
       ) : (
-        <ErrorState error={reportQuery.error} title="Could not load the report" />
+        <div className="card">
+          <CompressionProgress progress={progressData} />
+        </div>
       )}
     </div>
   );

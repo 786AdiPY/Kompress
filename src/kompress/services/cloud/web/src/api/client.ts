@@ -8,6 +8,7 @@ import type {
   ExportFormat,
   JobIn,
   ModelVersion,
+  ProgressReport,
   RegisteredModel,
   RunSummary,
 } from './types';
@@ -78,6 +79,41 @@ export function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/health');
 }
 
+export interface RecommendationResponse {
+  framework: string;
+  task: string;
+  recommended_methods: string[];
+  quality_tolerance: 'strict' | 'standard' | 'relaxed';
+  reasoning: string;
+  context_summary?: string;
+  ai_powered: boolean;
+}
+
+export async function getAiRecommendation(params: {
+  modelName?: string;
+  framework?: string;
+  targetHardware?: string;
+  contextText?: string;
+  contextFile?: File | null;
+}): Promise<RecommendationResponse> {
+  const form = new FormData();
+  if (params.modelName) form.append('model_name', params.modelName);
+  if (params.framework) form.append('framework', params.framework);
+  if (params.targetHardware) form.append('target_hardware', params.targetHardware);
+  if (params.contextText) form.append('context_text', params.contextText);
+  if (params.contextFile) form.append('context_file', params.contextFile);
+
+  const res = await fetch(`${BASE}/recommend`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!res.ok) {
+    throw new Error(`AI recommendation failed (${res.status})`);
+  }
+  return res.json();
+}
+
 /** Live list of valid target_hardware values for the Submit form. */
 export async function getHardwareTargets(): Promise<string[]> {
   const data = await request<{ targets: string[] }>('/hardware-targets');
@@ -136,8 +172,52 @@ export function getRun(id: string): Promise<RunStatusResponse> {
   return request<RunStatusResponse>(`/runs/${encodeURIComponent(id)}`);
 }
 
-export function getReport(id: string): Promise<CompressionReport> {
-  return request<CompressionReport>(`/runs/${encodeURIComponent(id)}/report`);
+export async function getReport(
+  id: string,
+): Promise<CompressionReport | ProgressReport | null> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(id)}/report`, {
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  // 202 = compression still in progress, return live progress payload
+  if (res.status === 202) {
+    try {
+      const body = await res.json();
+      return {
+        is_partial: true,
+        status: body.run_status || body.status || 'pending_gate',
+        stage: body.stage ?? 1,
+        stage_name: body.stage_name || 'Optimizing model graph',
+        model_name: body.model_name,
+        target_hardware: body.target_hardware,
+        variants_done: body.variants_done || [],
+        message: body.message,
+      };
+    } catch {
+      return {
+        is_partial: true,
+        status: 'pending_gate',
+        stage: 1,
+        stage_name: 'Optimizing model graph',
+      };
+    }
+  }
+
+  // 404 = run doesn't exist or report will never exist (legacy fallback)
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`.trim();
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === 'string') detail = body.detail;
+    } catch {
+      /* no json body */
+    }
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
+
+  return (await res.json()) as CompressionReport;
 }
 
 /** URL for the winning-variant download. Use as an <a href>, not fetch-json. */

@@ -27,7 +27,25 @@ def get_adapter(framework: str) -> type[ModelAdapter]:
 
 
 def load_model(framework: str, artifact_path: str, **kwargs) -> ModelAdapter:
-    return get_adapter(framework).load(artifact_path, framework=framework, **kwargs)
+    # Auto-detect PyTorch models (.pt / .pth) when framework was mismatched (e.g. xgboost selected for model.pt)
+    if artifact_path.lower().endswith((".pt", ".pth")) and framework in ("xgboost", "sklearn", "lightgbm"):
+        try:
+            return PyTorchAdapter.load(artifact_path, framework="pytorch", **kwargs)
+        except Exception:
+            pass
+
+    try:
+        return get_adapter(framework).load(artifact_path, framework=framework, **kwargs)
+    except Exception as err:
+        if artifact_path.lower().endswith((".pt", ".pth")):
+            try:
+                return PyTorchAdapter.load(artifact_path, framework="pytorch", **kwargs)
+            except Exception:
+                pass
+        raise ValueError(
+            f"Failed to load model file '{artifact_path}' with framework '{framework}'. "
+            f"Please ensure the selected framework matches the model format. Details: {err}"
+        ) from err
 
 
 __all__ = ["ModelAdapter", "get_adapter", "load_model", "SklearnAdapter", "PyTorchAdapter"]

@@ -59,7 +59,10 @@ def main():
         model = payload.get("model_name", "?")
         print(f"[worker] claimed run={run_id} model={model}", flush=True)
         try:
-            status = execute_job(run_id, payload["job"], payload["model_name"])
+            import importlib
+            import kompress.services.cloud.worker.executor as exec_mod
+            importlib.reload(exec_mod)
+            status = exec_mod.execute_job(run_id, payload["job"], payload["model_name"])
             q.complete(handle)
             print(f"[worker] done run={run_id} -> {status}", flush=True)
         except Exception as e:  # noqa: BLE001 — execute_job already tags failure; guard the loop

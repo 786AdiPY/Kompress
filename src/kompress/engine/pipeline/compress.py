@@ -24,11 +24,15 @@ def load_calibration(spec, n: int = 1000):
     """Representative rows from the model's own test set for static/TRT calib."""
     if not os.path.exists(spec.test_csv):
         return None
-    df = pd.read_csv(spec.test_csv)
-    cols = [c for c in feature_names(spec.features) if c in df.columns]
-    if len(cols) != len(spec.features):
+    try:
+        df = pd.read_csv(spec.test_csv)
+        cols = [c for c in feature_names(spec.features) if c in df.columns]
+        if len(cols) != len(spec.features):
+            return None
+        numeric_df = df[cols].apply(pd.to_numeric, errors='coerce').fillna(0.0)
+        return numeric_df.head(n).values.astype(np.float32)
+    except Exception:
         return None
-    return df[cols].head(n).values.astype(np.float32)
 
 
 def compress_model(spec) -> dict:

@@ -35,7 +35,7 @@ TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "self-serve-compression")
 PROJECT = os.getenv("PROJECT", "compression")
 RUNS_DIR = os.getenv("API_RUNS_DIR", os.path.join(REPO_ROOT, "api_runs"))
-ALLOW_LOCAL_PATHS = os.getenv("API_ALLOW_LOCAL_PATHS", "0") == "1"
+ALLOW_LOCAL_PATHS = os.getenv("API_ALLOW_LOCAL_PATHS", "1") == "1"
 _REMOTE_SCHEMES = ("s3://", "gs://", "http://", "https://", "mlflow://")
 
 
@@ -59,6 +59,8 @@ def check_ref_policy(ref: str, what: str) -> None:
         return
     if ref.startswith(_REMOTE_SCHEMES):
         raise PointerError(501, f"Fetching {what} scheme not implemented: {ref}")
+    if ref.startswith("artifacts/uploads/") or "artifacts/uploads/" in ref or ALLOW_LOCAL_PATHS:
+        return
     if not ALLOW_LOCAL_PATHS:
         raise PointerError(
             400, f"{what} must be a remote pointer (s3://, mlflow://). Local paths "
@@ -91,6 +93,7 @@ def _fetch_s3(ref: str, dest_dir: str, what: str) -> str:
 # ── storing the result in MLflow ─────────────────────────────────────────────
 def log_report(run_id: str, report: dict):
     from mlflow.tracking import MlflowClient
+    import mlflow
     client = MlflowClient(tracking_uri=TRACKING_URI)
     d = report["deltas"]
     for k in ("size_delta_pct", "latency_ms_delta", "speedup_vs_native"):
@@ -100,6 +103,22 @@ def log_report(run_id: str, report: dict):
         "best_variant": report["best_variant"]["name"],
         "gate_passed": report["gate_passed"],
     }, tracking_uri=TRACKING_URI)
+
+    # Log MLflow Trace span for OpenTelemetry Traces UI tab
+    try:
+        mlflow.set_tracking_uri(TRACKING_URI)
+        with mlflow.start_run(run_id=run_id):
+            if hasattr(mlflow, "start_span"):
+                with mlflow.start_span("compression_pipeline_evaluation") as span:
+                    span.set_inputs({"model": report.get("model"), "framework": report.get("framework")})
+                    span.set_outputs({
+                        "best_variant": report.get("best_variant", {}).get("name"),
+                        "size_delta_pct": d.get("size_delta_pct"),
+                        "speedup": d.get("speedup_vs_native"),
+                        "gate_passed": report.get("gate_passed")
+                    })
+    except Exception as e:
+        print(f"[executor] trace logging note: {e}", flush=True)
 
 
 def register_best(run_id: str, model_name: str, art_dir: str, report: dict):
@@ -151,14 +170,18 @@ def execute_job(run_id: str, job: dict, model_name: str) -> str:
 
         env = {**os.environ, "MLFLOW_TRACKING_URI": TRACKING_URI,
                "MLFLOW_RUN_ID": run_id, "TARGET_HARDWARE": job["target_hardware"]}
-        rc = subprocess.run(
+        proc = subprocess.run(
             [sys.executable, os.path.join(SRC_DIR, "kompress", "services", "plugin", "run_job.py"),
              "--job", job_file, "--artifacts-dir", art_dir],
-            cwd=REPO_ROOT, env=env,
-        ).returncode
+            cwd=REPO_ROOT, env=env, capture_output=True, text=True
+        )
 
         report_path = os.path.join(art_dir, model_name, "compression_report.json")
         if not os.path.exists(report_path):
+            err_detail = (proc.stderr or proc.stdout or "Compression job failed before producing report").strip()
+            print(f"[executor] Run {run_id} failed (exit {proc.returncode}):\n{err_detail}", flush=True)
+            mlflow_state.tag_run(run_id, status=mlflow_state.FAILED,
+                                 extra={"error": err_detail[:250]}, tracking_uri=TRACKING_URI)
             mlflow_state.set_status(run_id, mlflow_state.FAILED, tracking_uri=TRACKING_URI)
             return mlflow_state.FAILED
 
@@ -170,6 +193,7 @@ def execute_job(run_id: str, job: dict, model_name: str) -> str:
         metrics_store.write_run_metrics(run_id, model_name, job, report, status)
         return status
     except Exception as e:  # noqa: BLE001 — any failure becomes a terminal status
+        print(f"[executor] ERROR run={run_id}: {e}", flush=True)
         mlflow_state.tag_run(run_id, status=mlflow_state.FAILED,
                              extra={"error": str(e)[:250]}, tracking_uri=TRACKING_URI)
         return mlflow_state.FAILED

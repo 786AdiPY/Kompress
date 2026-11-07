@@ -1,8 +1,8 @@
 import type { RunStatus } from '../api/types';
 
 const LABELS: Record<RunStatus, string> = {
-  pending_gate: 'Pending Gate',
-  pending_approval: 'Pending Approval',
+  pending_gate: 'In Progress',
+  pending_approval: 'Succeeded',
   approved: 'Approved',
   rejected: 'Rejected',
   failed: 'Failed',

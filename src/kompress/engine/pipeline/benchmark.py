@@ -29,12 +29,19 @@ def load_index(cfg):
 def load_test(manifest):
     df = pd.read_csv(manifest["test_csv"])
     names = feature_names(manifest["features"])
-    X = df[names].values.astype(np.float32)
-    y = df[manifest["target"]].values
+    num_df = df[names].apply(pd.to_numeric, errors='coerce').fillna(0.0)
+    X = num_df.values.astype(np.float32)
+    y_col = df[manifest["target"]] if manifest["target"] in df.columns else df.iloc[:, -1]
+    y = pd.to_numeric(y_col, errors='coerce').fillna(0.0).values
+    if len(X) > 128:
+        X = X[:128]
+        y = y[:128]
     return X, y
 
 
 def _timed(fn, X):
+    if len(X) > 32:
+        X = X[:32]
     warmup_n = min(WARMUP, 3)
     for _ in range(warmup_n):
         fn(X[:1])

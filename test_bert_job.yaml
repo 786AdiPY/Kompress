@@ -1,0 +1,10 @@
+model:
+  name: bert_smoke_test
+  ref: artifacts/bert_sst2/model.safetensors
+  framework: pytorch
+  task: binary_classification
+  num_classes: 2
+  target: label
+test_data:
+  ref: data/sst2_validation.csv
+target_hardware: cpu-generic

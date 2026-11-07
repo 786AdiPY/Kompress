@@ -93,6 +93,17 @@ export interface CompressionReport {
   gate_report: any;
 }
 
+export interface ProgressReport {
+  is_partial: true;
+  status: string;
+  stage: number;
+  stage_name: string;
+  model_name?: string;
+  target_hardware?: string;
+  variants_done?: string[];
+  message?: string;
+}
+
 export interface RegisteredModel {
   name: string;
   production_version: string | null;
